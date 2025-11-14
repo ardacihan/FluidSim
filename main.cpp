@@ -13,18 +13,13 @@
 // =============================================================================
 
 // Grid dimensions
-const int GRID_COLS = 10;
-const int GRID_ROWS = 10;
+const int GRID_COLS = 192;
+const int GRID_ROWS = 108;
 
-// Window settings
-const int WINDOW_WIDTH = 900;
-const int WINDOW_HEIGHT = 900;
-const char* WINDOW_TITLE = "Fluid Grid Simulation";
-
-// Visual settings
-const float DEFAULT_CELL_SIZE = 20.0f;      // Pixels per cell
-const float MIN_CELL_SIZE = 5.0f;
-const float MAX_CELL_SIZE = 100.0f;
+// Window settings - High resolution fullscreen
+const int WINDOW_WIDTH = 1920;
+const int WINDOW_HEIGHT = 1080;
+const char* WINDOW_TITLE = "Fluid Simulation - Staggered Grid";
 
 // Grid colors (R, G, B, A) - values from 0-255
 const ImU32 BACKGROUND_TOP = IM_COL32(245, 247, 250, 255);
@@ -49,16 +44,20 @@ const int ARROW_COLOR_HIGH_R = 220;
 const int ARROW_COLOR_HIGH_G = 80;
 const int ARROW_COLOR_HIGH_B = 80;
 
-// Velocity color mapping
-const ImU32 MAX_INFLOW_COLOR = IM_COL32(0, 0, 255, 180);      // Blue for max inflow
-const ImU32 MAX_OUTFLOW_COLOR = IM_COL32(255, 0, 0, 180);     // Red for max outflow
-const ImU32 NEUTRAL_COLOR = IM_COL32(128, 128, 128, 100);     // Gray for neutral
-const float VELOCITY_THRESHOLD = 0.01f;                       // Minimum velocity to show color
-
 // UI settings
 const float UI_FONT_SCALE = 1.3f;
 const float UI_WINDOW_ROUNDING = 8.0f;
 const float UI_FRAME_ROUNDING = 4.0f;
+
+// Mouse interaction
+const float MOUSE_DENSITY_AMOUNT = 10.0f;     // How much density to add per click
+const float MOUSE_VELOCITY_STRENGTH = 1.0f; // How much velocity to add per drag
+const float MOUSE_RADIUS = 1.0f;             // Radius of effect in cells
+
+// Simulation parameters
+const float DIFFUSION_RATE = 0.0001f;
+const float VISCOSITY = 0.0001f;
+const float TIME_STEP = 0.05f;
 
 // =============================================================================
 // Helper Functions
@@ -75,105 +74,48 @@ void initializeImGuiStyle() {
     style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.15f, 0.35f, 0.65f, 1.0f);
 }
 
-void drawCellBackgrounds(ImDrawList* draw_list, const Grid& grid, float cellSize,
-                        float startX, float startY) {
-    for (int i = 0; i < grid.CellCountX; ++i) {
-        for (int j = 0; j < grid.CellCountY; ++j) {
-            float x1 = startX + i * cellSize;
-            float y1 = startY + j * cellSize;
-            float x2 = x1 + cellSize;
-            float y2 = y1 + cellSize;
+// Calculate optimal cell size to fit grid perfectly in window
+float calculateCellSize(int windowWidth, int windowHeight, int gridCols, int gridRows) {
+    // Grid includes 2 extra cells for walls on each side
+    int totalCols = gridCols + 2;
+    int totalRows = gridRows + 2;
 
-            draw_list->AddRectFilledMultiColor(
-                ImVec2(x1, y1), ImVec2(x2, y2),
-                BACKGROUND_TOP, BACKGROUND_TOP,
-                BACKGROUND_BOTTOM, BACKGROUND_BOTTOM
-            );
-        }
-    }
+    // Calculate maximum cell size that fits both dimensions
+    float cellSizeByWidth = (float)windowWidth / totalCols;
+    float cellSizeByHeight = (float)windowHeight / totalRows;
+
+    // Use the smaller of the two to ensure it fits
+    return std::min(cellSizeByWidth, cellSizeByHeight);
 }
 
-void drawVelocityColors(ImDrawList* draw_list, const Grid& grid, float cellSize,
-                       float startX, float startY) {
-    // First pass: find max divergence magnitude for normalization
-    float maxDivergence = 0.0f;
-    for (int i = 0; i < grid.CellCountX; ++i) {
-        for (int j = 0; j < grid.CellCountY; ++j) {
-            // Calculate divergence for this cell
-            // Divergence = (right_flow - left_flow) + (top_flow - bottom_flow)
-            float divergence = 0.0f;
-
-            // Horizontal divergence: flow in from left, out through right
-            if (i > 0) divergence += grid.cells[i-1][j].right_force;  // Flow in from left
-            if (i < grid.CellCountX - 1) divergence -= grid.cells[i][j].right_force; // Flow out through right
-
-            // Vertical divergence: flow in from bottom, out through top
-            if (j > 0) divergence += grid.cells[i][j-1].top_force;    // Flow in from bottom
-            if (j < grid.CellCountY - 1) divergence -= grid.cells[i][j].top_force; // Flow out through top
-
-            maxDivergence = std::max(maxDivergence, std::abs(divergence));
+void drawCellBackgrounds(ImDrawList* draw_list, const Grid& grid, float cellSize,
+                        float startX, float startY) {
+    // Find max density for normalization
+    float maxDensity = 0.0f;
+    for (int i = 1; i <= grid.CellCountX; ++i) {
+        for (int j = 1; j <= grid.CellCountY; ++j) {
+            maxDensity = std::max(maxDensity, grid.d[i][j]);
         }
     }
 
     // Avoid division by zero
-    if (maxDivergence < VELOCITY_THRESHOLD) {
-        // Draw all cells as neutral to see the grid
-        for (int i = 0; i < grid.CellCountX; ++i) {
-            for (int j = 0; j < grid.CellCountY; ++j) {
-                float x1 = startX + i * cellSize;
-                float y1 = startY + j * cellSize;
-                float x2 = x1 + cellSize;
-                float y2 = y1 + cellSize;
-                draw_list->AddRectFilled(ImVec2(x1, y1), ImVec2(x2, y2), NEUTRAL_COLOR);
-            }
-        }
-        return;
-    }
+    if (maxDensity < 0.001f) maxDensity = 1.0f;
 
-    // Second pass: draw colored rectangles for each CELL
-    for (int i = 0; i < grid.CellCountX + 1; ++i) {
-        for (int j = 0; j < grid.CellCountY + 1; ++j) {
-            // Calculate divergence for this cell
-            float divergence = 0.0f;
-
-            // Horizontal divergence
-            if (i > 0) divergence += grid.cells[i-1][j].right_force;  // Flow in from left
-            if (i < grid.CellCountX - 1) divergence -= grid.cells[i][j].right_force; // Flow out through right
-
-            // Vertical divergence
-            if (j > 0) divergence += grid.cells[i][j-1].top_force;    // Flow in from bottom
-            if (j < grid.CellCountY - 1) divergence -= grid.cells[i][j].top_force; // Flow out through top
-
-            // Normalize divergence to [-1, 1] range
-            float normalizedDiv = divergence / maxDivergence;
-            normalizedDiv = std::clamp(normalizedDiv, -1.0f, 1.0f);
-
-            // Calculate cell position
+    // Draw density visualization: black (low) to white (high)
+    for (int i = 1; i <= grid.CellCountX; ++i) {
+        for (int j = 1; j <= grid.CellCountY; ++j) {
             float x1 = startX + i * cellSize;
             float y1 = startY + j * cellSize;
             float x2 = x1 + cellSize;
             float y2 = y1 + cellSize;
 
-            // Choose color based on divergence
-            ImU32 color;
-            if (normalizedDiv > 0) {
-                // Positive divergence = source (red) - fluid flowing out
-                float t = normalizedDiv;
-                int r = (int)(128 + t * (255 - 128));
-                int g = (int)(128 * (1 - t));
-                int b = (int)(128 * (1 - t));
-                color = IM_COL32(r, g, b, 180);
-            } else if (normalizedDiv < 0) {
-                // Negative divergence = sink (blue) - fluid flowing in
-                float t = -normalizedDiv;
-                int r = (int)(128 * (1 - t));
-                int g = (int)(128 * (1 - t));
-                int b = (int)(128 + t * (255 - 128));
-                color = IM_COL32(r, g, b, 180);
-            } else {
-                // Zero divergence (gray)
-                color = NEUTRAL_COLOR;
-            }
+            // Normalize density to [0, 1]
+            float normalizedDensity = grid.d[i][j] / maxDensity;
+            normalizedDensity = std::clamp(normalizedDensity, 0.0f, 1.0f);
+
+            // Map to grayscale: 0 (black) to 255 (white)
+            int gray = (int)(normalizedDensity * 255);
+            ImU32 color = IM_COL32(gray, gray, gray, 255);
 
             draw_list->AddRectFilled(ImVec2(x1, y1), ImVec2(x2, y2), color);
         }
@@ -183,9 +125,9 @@ void drawVelocityColors(ImDrawList* draw_list, const Grid& grid, float cellSize,
 void drawGridLines(ImDrawList* draw_list, const Grid& grid, float cellSize,
                    float startX, float startY, float gridWidth, float gridHeight) {
     // Vertical lines
-    for (int i = 0; i <= grid.CellCountX + 1; ++i) {
+    for (int i = 0; i <= grid.CellCountX + 2; ++i) {
         float x = startX + i * cellSize;
-        bool isWall = (i == 0 || i == grid.CellCountX + 1);
+        bool isWall = (i == 0 || i == grid.CellCountX + 2);
         float thickness = isWall ? WALL_THICKNESS : INNER_LINE_THICKNESS;
         ImU32 color = isWall ? WALL_COLOR : INNER_LINE_COLOR;
 
@@ -197,9 +139,9 @@ void drawGridLines(ImDrawList* draw_list, const Grid& grid, float cellSize,
     }
 
     // Horizontal lines
-    for (int i = 0; i <= grid.CellCountY + 1; ++i) {
+    for (int i = 0; i <= grid.CellCountY + 2; ++i) {
         float y = startY + i * cellSize;
-        bool isWall = (i == 0 || i == grid.CellCountY + 1);
+        bool isWall = (i == 0 || i == grid.CellCountY + 2);
         float thickness = isWall ? WALL_THICKNESS : INNER_LINE_THICKNESS;
         ImU32 color = isWall ? WALL_COLOR : INNER_LINE_COLOR;
 
@@ -213,22 +155,24 @@ void drawGridLines(ImDrawList* draw_list, const Grid& grid, float cellSize,
 
 void drawFlowVectors(ImDrawList* draw_list, const Grid& grid, float cellSize,
                      float startX, float startY) {
-    for (int i = 0; i < grid.CellCountX + 1; ++i) {
-        for (int j = 0; j < grid.CellCountY + 1; ++j) {
+    // Draw arrows at cell centers using interpolated velocities
+    for (int i = 1; i <= grid.CellCountX; ++i) {
+        for (int j = 1; j <= grid.CellCountY; ++j) {
+            // Calculate cell center position
             float cx = startX + (i + 0.5f) * cellSize;
             float cy = startY + (j + 0.5f) * cellSize;
 
-            // Combine horizontal and vertical forces into a single vector
-            float fx = grid.cells[i][j].right_force;
-            float fy = grid.cells[i][j].top_force;
+            // Interpolate velocities to cell center
+            float u_center = 0.5f * (grid.u[i-1][j] + grid.u[i][j]);
+            float v_center = 0.5f * (grid.v[i][j-1] + grid.v[i][j]);
 
             // Calculate magnitude
-            float magnitude = std::sqrt(fx * fx + fy * fy);
+            float magnitude = std::sqrt(u_center * u_center + v_center * v_center);
 
             if (magnitude > FLOW_THRESHOLD) {
                 // Normalize direction
-                float dirX = fx / magnitude;
-                float dirY = fy / magnitude;
+                float dirX = u_center / magnitude;
+                float dirY = v_center / magnitude;
 
                 // Scale arrow length based on magnitude
                 float maxLength = ARROW_MAX_LENGTH_RATIO * cellSize;
@@ -254,7 +198,7 @@ void drawFlowVectors(ImDrawList* draw_list, const Grid& grid, float cellSize,
                 // Draw arrow shaft
                 draw_list->AddLine(ImVec2(cx, cy), ImVec2(ex, ey), color, lineWidth);
 
-                // Calculate arrow head points (perpendicular vector for wings)
+                // Calculate arrow head points
                 float perpX = -dirY;
                 float perpY = dirX;
 
@@ -270,46 +214,149 @@ void drawFlowVectors(ImDrawList* draw_list, const Grid& grid, float cellSize,
     }
 }
 
-void renderControlPanel(Grid& grid, float& cellSize, bool& showArrows, bool& showVelocityColors, const ImGuiIO& io) {
+void addDensityAtMouse(Grid& grid, float mouseX, float mouseY, float startX, float startY, float cellSize) {
+    // Convert mouse position to grid coordinates
+    float gridX = (mouseX - startX) / cellSize;
+    float gridY = (mouseY - startY) / cellSize;
+
+    // Check if mouse is within grid bounds (excluding walls)
+    if (gridX >= 1.0f && gridX <= grid.CellCountX + 1.0f &&
+        gridY >= 1.0f && gridY <= grid.CellCountY + 1.0f) {
+
+        int centerI = static_cast<int>(gridX);
+        int centerJ = static_cast<int>(gridY);
+
+        // Add density in a circular area around the mouse
+        for (int i = std::max(1, centerI - static_cast<int>(MOUSE_RADIUS));
+             i <= std::min(grid.CellCountX, centerI + static_cast<int>(MOUSE_RADIUS));
+             ++i) {
+            for (int j = std::max(1, centerJ - static_cast<int>(MOUSE_RADIUS));
+                 j <= std::min(grid.CellCountY, centerJ + static_cast<int>(MOUSE_RADIUS));
+                 ++j) {
+
+                // Calculate distance from mouse center
+                float dist = std::sqrt((i - gridX) * (i - gridX) + (j - gridY) * (j - gridY));
+
+                if (dist <= MOUSE_RADIUS) {
+                    // Add more density closer to center (inverse square falloff)
+                    float falloff = 1.0f - (dist / MOUSE_RADIUS);
+                    grid.d[i][j] += MOUSE_DENSITY_AMOUNT * falloff * falloff;
+                }
+            }
+        }
+    }
+}
+
+void addVelocityAtMouse(Grid& grid, float mouseX, float mouseY, float velX, float velY,
+                       float startX, float startY, float cellSize) {
+    // Convert mouse position to grid coordinates
+    float gridX = (mouseX - startX) / cellSize;
+    float gridY = (mouseY - startY) / cellSize;
+
+    // Check if mouse is within grid bounds (excluding walls)
+    if (gridX >= 1.0f && gridX <= grid.CellCountX + 1.0f &&
+        gridY >= 1.0f && gridY <= grid.CellCountY + 1.0f) {
+
+        int centerI = static_cast<int>(gridX);
+        int centerJ = static_cast<int>(gridY);
+
+        // Add velocity in a circular area around the mouse
+        for (int i = std::max(1, centerI - static_cast<int>(MOUSE_RADIUS));
+             i <= std::min(grid.CellCountX, centerI + static_cast<int>(MOUSE_RADIUS));
+             ++i) {
+            for (int j = std::max(1, centerJ - static_cast<int>(MOUSE_RADIUS));
+                 j <= std::min(grid.CellCountY, centerJ + static_cast<int>(MOUSE_RADIUS));
+                 ++j) {
+
+                // Calculate distance from mouse center
+                float dist = std::sqrt((i - gridX) * (i - gridX) + (j - gridY) * (j - gridY));
+
+                if (dist <= MOUSE_RADIUS) {
+                    // Add more velocity closer to center (inverse square falloff)
+                    float falloff = 1.0f - (dist / MOUSE_RADIUS);
+                    float strength = falloff * falloff;
+
+                    // Apply velocity to both u and v components
+                    grid.u[i][j] += velX * strength;
+                    grid.v[i][j] += velY * strength;
+                }
+            }
+        }
+    }
+}
+
+void renderControlPanel(Grid& grid, bool& simulationRunning, float& timeStep, float& diffusionRate, float& viscosity,
+                       bool& showArrows, const ImGuiIO& io, float startX, float startY, float cellSize) {
     ImGui::SetNextWindowPos(ImVec2(30, 30), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(400, 320), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(400, 450), ImGuiCond_FirstUseEver);
     ImGui::Begin("Fluid Simulation Controls", nullptr, ImGuiWindowFlags_NoCollapse);
 
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.9f, 0.95f, 1.0f));
 
     ImGui::Text("Grid Configuration: %dx%d cells", grid.CellCountX, grid.CellCountY);
+    ImGui::Text("Cell Size: %.1f px (auto-fitted)", grid.cellDisplaySize);
     ImGui::Separator();
     ImGui::Spacing();
 
-    ImGui::SliderFloat("Cell Display Size", &cellSize, MIN_CELL_SIZE, MAX_CELL_SIZE, "%.0f px");
-    grid.cellDisplaySize = cellSize;
+    ImGui::Text("Visualization:");
+    ImGui::Checkbox("Show Velocity Arrows", &showArrows);
+    ImGui::Indent();
+    ImGui::Text("Density: Black (low) → White (high)");
+    ImGui::Text("Arrows: Blue (slow) → Red (fast)");
+    ImGui::Unindent();
 
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
 
-    ImGui::Text("Visualization Modes:");
-    ImGui::Checkbox("Show Flow Arrows", &showArrows);
-    ImGui::Checkbox("Show Velocity Colors", &showVelocityColors);
+    ImGui::Text("Simulation Parameters:");
+    ImGui::SliderFloat("Time Step", &timeStep, 0.01f, 0.5f, "%.3f");
+    ImGui::SliderFloat("Diffusion Rate", &diffusionRate, 0.0f, 0.1f, "%.4f");
+    ImGui::SliderFloat("Viscosity", &viscosity, 0.0f, 0.1f, "%.4f");
 
-    // Show color legend
-    if (showVelocityColors) {
-        ImGui::Indent();
-        ImGui::TextColored(ImVec4(0.0f, 0.0f, 1.0f, 1.0f), "■ Inflow (Blue)");
-        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "■ Outflow (Red)");
-        ImGui::Unindent();
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Text("Controls:");
+
+    // Simulation control buttons
+    if (ImGui::Button(simulationRunning ? "Pause Simulation" : "Start Simulation", ImVec2(180, 35))) {
+        simulationRunning = !simulationRunning;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Step Once", ImVec2(180, 35))) {
+        // Single simulation step
+        grid.vel_step(viscosity, timeStep);
+        grid.density_step(diffusionRate, timeStep);
+    }
+
+    if (ImGui::Button("Randomize Density", ImVec2(180, 35))) {
+        grid.initializeDensity();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Clear Density", ImVec2(180, 35))) {
+        grid.clearDensity();
     }
 
     ImGui::Spacing();
-    ImGui::Spacing();
-
-    if (ImGui::Button("Randomize Forces", ImVec2(180, 35))) {
+    if (ImGui::Button("Randomize Velocities", ImVec2(180, 35))) {
         grid.initializeRandomVelocities();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Reset Forces", ImVec2(180, 35))) {
+    if (ImGui::Button("Clear Velocities", ImVec2(180, 35))) {
         grid.resetVelocities();
     }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Text("Mouse Interaction:");
+    ImGui::Text("Left Click: Add density");
+    ImGui::Text("Right Click + Drag: Add velocity");
+    ImGui::Text("Grid Area: (%.0f, %.0f) to (%.0f, %.0f)",
+                startX, startY, startX + (grid.CellCountX + 2) * cellSize, startY + (grid.CellCountY + 2) * cellSize);
 
     ImGui::Spacing();
     ImGui::Separator();
@@ -367,13 +414,25 @@ int main() {
         return -1;
     }
 
-    // Initialize simulation
+    // Initialize simulation grid
     Grid grid(GRID_COLS, GRID_ROWS, 1.0f);
-    grid.cellDisplaySize = DEFAULT_CELL_SIZE;
 
+    // Calculate cell size to fit window perfectly
+    float cellSize = calculateCellSize(WINDOW_WIDTH, WINDOW_HEIGHT, GRID_COLS, GRID_ROWS);
+    grid.cellDisplaySize = cellSize;
+
+    // Simulation state
+    bool simulationRunning = false;
     bool showArrows = true;
-    bool showVelocityColors = false;
-    float cellSize = DEFAULT_CELL_SIZE;
+
+    // Mouse drag tracking for velocity
+    bool isRightDragging = false;
+    ImVec2 lastMousePos = ImVec2(0, 0);
+
+    // Simulation parameters with default values
+    float timeStep = TIME_STEP;
+    float diffusionRate = DIFFUSION_RATE;
+    float viscosity = VISCOSITY;
 
     // Main loop
     while (!glfwWindowShouldClose(window)) {
@@ -393,26 +452,64 @@ int main() {
         ImDrawList* draw_list = ImGui::GetBackgroundDrawList();
 
         // Calculate grid dimensions and centering
-        float gridWidth = (grid.CellCountX + 1) * cellSize;
-        float gridHeight = (grid.CellCountY + 1) * cellSize;
+        float gridWidth = (GRID_COLS + 2) * cellSize;
+        float gridHeight = (GRID_ROWS + 2) * cellSize;
         float startX = (display_w - gridWidth) / 2.0f;
         float startY = (display_h - gridHeight) / 2.0f;
 
-        // Render grid components
-        drawCellBackgrounds(draw_list, grid, cellSize, startX, startY);
+        // Handle mouse input
+        ImVec2 currentMousePos = ImGui::GetMousePos();
 
-        if (showVelocityColors) {
-            drawVelocityColors(draw_list, grid, cellSize, startX, startY);
+        // Left click - add density
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::GetIO().WantCaptureMouse) {
+            addDensityAtMouse(grid, currentMousePos.x, currentMousePos.y, startX, startY, cellSize);
         }
 
+        // Right click drag - add velocity
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Right) && !ImGui::GetIO().WantCaptureMouse) {
+            if (!isRightDragging) {
+                // Start dragging
+                isRightDragging = true;
+                lastMousePos = currentMousePos;
+            } else {
+                // Calculate drag velocity (direction and magnitude)
+                float dragX = currentMousePos.x - lastMousePos.x;
+                float dragY = currentMousePos.y - lastMousePos.y;
+
+                // Normalize and scale by strength
+                float length = std::sqrt(dragX * dragX + dragY * dragY);
+                if (length > 0.1f) {  // Minimum drag threshold
+                    dragX = (dragX / length) * MOUSE_VELOCITY_STRENGTH;
+                    dragY = (dragY / length) * MOUSE_VELOCITY_STRENGTH;
+
+                    addVelocityAtMouse(grid, currentMousePos.x, currentMousePos.y, dragX, dragY, startX, startY, cellSize);
+                }
+
+                lastMousePos = currentMousePos;
+            }
+        } else {
+            isRightDragging = false;
+        }
+
+        // Run simulation step if running
+        if (simulationRunning) {
+            // Full fluid simulation (both velocity and density)
+            grid.vel_step(viscosity, timeStep);
+            grid.density_step(diffusionRate, timeStep);
+        }
+
+        // Render grid components
+        drawCellBackgrounds(draw_list, grid, cellSize, startX, startY);
         drawGridLines(draw_list, grid, cellSize, startX, startY, gridWidth, gridHeight);
 
+        // Draw velocity arrows if enabled
         if (showArrows) {
             drawFlowVectors(draw_list, grid, cellSize, startX, startY);
         }
 
         // Render UI
-        renderControlPanel(grid, cellSize, showArrows, showVelocityColors, io);
+        renderControlPanel(grid, simulationRunning, timeStep, diffusionRate, viscosity,
+                          showArrows, io, startX, startY, cellSize);
 
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
