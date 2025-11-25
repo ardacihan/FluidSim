@@ -29,20 +29,18 @@ void Grid::initializeRandomVelocities() {
     std::uniform_real_distribution<float> dis(-1.0f, 1.0f);
 
     // Initialize u velocities (horizontal component at vertical faces)
-    for (int i = 1; i < CellCountX; ++i) {  // Skip walls at i=0 and i=CellCountX
-        for (int j = 1; j <= CellCountY; ++j) {  // Skip walls at j=0 and j=CellCountY+1
+    for (int i = 1; i < CellCountX; ++i) {
+        for (int j = 1; j <= CellCountY; ++j) {
             u[i][j] = dis(gen);
         }
     }
 
     // Initialize v velocities (vertical component at horizontal faces)
-    for (int i = 1; i <= CellCountX; ++i) {  // Skip walls at i=0 and i=CellCountX+1
-        for (int j = 1; j < CellCountY; ++j) {  // Skip walls at j=0 and j=CellCountY
+    for (int i = 1; i <= CellCountX; ++i) {
+        for (int j = 1; j < CellCountY; ++j) {
             v[i][j] = dis(gen);
         }
     }
-
-    //debugBorderVelocities();
 }
 
 void Grid::resetVelocities() {
@@ -67,43 +65,25 @@ void Grid::resetVelocities() {
 
 void Grid::debugBorderVelocities() {
     std::cout << "=== BORDER VELOCITIES ===" << std::endl;
-
-    // Check left border u velocities (i=0)
     std::cout << "\n--- LEFT BORDER U (i=0) ---" << std::endl;
     for (int j = 0; j <= CellCountY + 1; ++j) {
         std::cout << "u[0][" << j << "] = " << u[0][j] << std::endl;
     }
-
-    // Check right border u velocities (i=CellCountX)
-    std::cout << "\n--- RIGHT BORDER U (i=" << CellCountX << ") ---" << std::endl;
-    for (int j = 0; j <= CellCountY + 1; ++j) {
-        std::cout << "u[" << CellCountX << "][" << j << "] = " << u[CellCountX][j] << std::endl;
-    }
-
-    // Check bottom border v velocities (j=0)
-    std::cout << "\n--- BOTTOM BORDER V (j=0) ---" << std::endl;
-    for (int i = 0; i <= CellCountX + 1; ++i) {
-        std::cout << "v[" << i << "][0] = " << v[i][0] << std::endl;
-    }
-
-    // Check top border v velocities (j=CellCountY)
-    std::cout << "\n--- TOP BORDER V (j=" << CellCountY << ") ---" << std::endl;
-    for (int i = 0; i <= CellCountX + 1; ++i) {
-        std::cout << "v[" << i << "][" << CellCountY << "] = " << v[i][CellCountY] << std::endl;
-    }
 }
 
 void Grid::diffuse(int b, float diff, float dt) {
-
     std::vector<std::vector<float>> x0 = (b == 0) ? d : ((b == 1) ? u : v);
     std::vector<std::vector<float>>& x = (b == 0) ? d : ((b == 1) ? u : v);
 
     float a = dt * diff * CellCountX * CellCountY;
 
-    // Use Gauss-Seidel iteration for stable diffusion
+    int iMax = (b == 1) ? CellCountX : CellCountX + 1;
+    int jMax = (b == 2) ? CellCountY : CellCountY + 1;
+
+    // Gauss-Seidel iteration
     for (int k = 0; k < 20; k++) {
-        for (int i = 1; i <= CellCountX; i++) {
-            for (int j = 1; j <= CellCountY; j++) {
+        for (int i = 1; i < iMax; i++) {
+            for (int j = 1; j < jMax; j++) {
                 x[i][j] = (x0[i][j] + a * (x[i-1][j] + x[i+1][j] +
                                           x[i][j-1] + x[i][j+1])) / (1 + 4*a);
             }
@@ -112,49 +92,50 @@ void Grid::diffuse(int b, float diff, float dt) {
     }
 }
 
-
 void Grid::set_bnd(int b, std::vector<std::vector<float>>& x) {
     int NX = CellCountX;
     int NY = CellCountY;
 
-    // Set boundaries for each side
-    for (int i = 1; i <= NX; ++i) {
-        // Bottom boundary (j = 0)
-        if (b == 2) { // For vertical velocity component
-            x[i][0] = -x[i][1]; // No-slip condition
-        } else {
-            x[i][0] = x[i][1]; // Continuity for other fields
+    // For density field (b=0): size is (NX+2) x (NY+2)
+    if (b == 0) {
+        for (int i = 1; i <= NX; ++i) {
+            x[i][0] = x[i][1];           // Bottom
+            x[i][NY+1] = x[i][NY];       // Top
         }
-
-        // Top boundary (j = NY + 1)
-        if (b == 2) { // For vertical velocity component
-            x[i][NY+1] = -x[i][NY]; // No-slip condition
-        } else {
-            x[i][NY+1] = x[i][NY]; // Continuity for other fields
+        for (int j = 1; j <= NY; ++j) {
+            x[0][j] = x[1][j];           // Left
+            x[NX+1][j] = x[NX][j];       // Right
         }
+        // Corners
+        x[0][0] = 0.5f * (x[1][0] + x[0][1]);
+        x[0][NY+1] = 0.5f * (x[1][NY+1] + x[0][NY]);
+        x[NX+1][0] = 0.5f * (x[NX][0] + x[NX+1][1]);
+        x[NX+1][NY+1] = 0.5f * (x[NX][NY+1] + x[NX+1][NY]);
     }
-
-    for (int j = 1; j <= NY; ++j) {
-        // Left boundary (i = 0)
-        if (b == 1) { // For horizontal velocity component
-            x[0][j] = -x[1][j]; // No-slip condition
-        } else {
-            x[0][j] = x[1][j]; // Continuity for other fields
+    // For u velocity (b=1): size is (NX+1) x (NY+2)
+    else if (b == 1) {
+        for (int i = 1; i < NX; ++i) {
+            x[i][0] = x[i][1];           // Bottom
+            x[i][NY+1] = x[i][NY];       // Top
         }
-
-        // Right boundary (i = NX + 1)
-        if (b == 1) { // For horizontal velocity component
-            x[NX+1][j] = -x[NX][j]; // No-slip condition
-        } else {
-            x[NX+1][j] = x[NX][j]; // Continuity for other fields
-        }
+        // Left and right walls: no-slip (already zero)
+        x[0][0] = 0.0f;
+        x[NX][0] = 0.0f;
+        x[0][NY+1] = 0.0f;
+        x[NX][NY+1] = 0.0f;
     }
-
-    // Handle corners by averaging
-    x[0][0] = 0.5f * (x[1][0] + x[0][1]);
-    x[0][NY+1] = 0.5f * (x[1][NY+1] + x[0][NY]);
-    x[NX+1][0] = 0.5f * (x[NX][0] + x[NX+1][1]);
-    x[NX+1][NY+1] = 0.5f * (x[NX][NY+1] + x[NX+1][NY]);
+    // For v velocity (b=2): size is (NX+2) x (NY+1)
+    else if (b == 2) {
+        for (int j = 1; j < NY; ++j) {
+            x[0][j] = x[1][j];           // Left
+            x[NX+1][j] = x[NX][j];       // Right
+        }
+        // Top and bottom walls: no-slip (already zero)
+        x[0][0] = 0.0f;
+        x[NX+1][0] = 0.0f;
+        x[0][NY] = 0.0f;
+        x[NX+1][NY] = 0.0f;
+    }
 }
 
 void Grid::initializeDensity() {
@@ -178,38 +159,54 @@ void Grid::clearDensity() {
 }
 
 void Grid::advect(int b, float dt) {
-    std::vector<std::vector<float>>& d = (b == 0) ? this->d : ((b == 1) ? u : v);
-    std::vector<std::vector<float>> d0 = d;
-    std::vector<std::vector<float>>& u = this->u;
-    std::vector<std::vector<float>>& v = this->v;
+    std::vector<std::vector<float>>& field = (b == 0) ? d : ((b == 1) ? u : v);
+    std::vector<std::vector<float>> field0 = field;
 
     float dt0_x = dt * CellCountX;
     float dt0_y = dt * CellCountY;
 
-    for (int i = 1; i <= CellCountX; i++) {
-        for (int j = 1; j <= CellCountY; j++) {
-            // Trace backwards in velocity field
-            float x = i - dt0_x * u[i][j];
-            float y = j - dt0_y * v[i][j];
+    int iMax = (b == 1) ? CellCountX : CellCountX + 1;
+    int jMax = (b == 2) ? CellCountY : CellCountY + 1;
 
-            // Clamp to grid boundaries
-            x = std::max(0.5f, std::min(x, CellCountX + 0.5f));
-            y = std::max(0.5f, std::min(y, CellCountY + 0.5f));
+    for (int i = 1; i < iMax; i++) {
+        for (int j = 1; j < jMax; j++) {
+            // Interpolate velocity at current position
+            float vel_u, vel_v;
 
-            // Integer coordinates
+            if (b == 1) {
+                // For u: already at correct location
+                vel_u = field0[i][j];
+                vel_v = 0.25f * (v[i][j] + v[i+1][j] + v[i][j-1] + v[i+1][j-1]);
+            } else if (b == 2) {
+                // For v: already at correct location
+                vel_u = 0.25f * (u[i][j] + u[i-1][j] + u[i][j+1] + u[i-1][j+1]);
+                vel_v = field0[i][j];
+            } else {
+                // For density at cell center
+                vel_u = 0.5f * (u[i][j] + u[i-1][j]);
+                vel_v = 0.5f * (v[i][j] + v[i][j-1]);
+            }
+
+            // Trace backwards
+            float x = i - dt0_x * vel_u;
+            float y = j - dt0_y * vel_v;
+
+            // Clamp to valid range
+            x = std::max(0.5f, std::min(x, (float)iMax - 0.5f));
+            y = std::max(0.5f, std::min(y, (float)jMax - 0.5f));
+
+            // Bilinear interpolation
             int i0 = (int)x, i1 = i0 + 1;
             int j0 = (int)y, j1 = j0 + 1;
 
-            // Interpolation weights
             float s1 = x - i0, s0 = 1 - s1;
             float t1 = y - j0, t0 = 1 - t1;
 
-            // Bilinear interpolation
-            d[i][j] = s0 * (t0 * d0[i0][j0] + t1 * d0[i0][j1]) +
-                      s1 * (t0 * d0[i1][j0] + t1 * d0[i1][j1]);
+            field[i][j] = s0 * (t0 * field0[i0][j0] + t1 * field0[i0][j1]) +
+                          s1 * (t0 * field0[i1][j0] + t1 * field0[i1][j1]);
         }
     }
-    set_bnd(b, d);
+    set_bnd(b, field);
 }
 
 void Grid::density_step(float diff, float dt) {
@@ -218,8 +215,6 @@ void Grid::density_step(float diff, float dt) {
 }
 
 void Grid::vel_step(float visc, float dt) {
-    // Add source terms first (handled by mouse interaction)
-
     // Diffuse velocity
     diffuse(1, visc, dt);
     diffuse(2, visc, dt);
@@ -234,6 +229,7 @@ void Grid::vel_step(float visc, float dt) {
     // Project again
     project();
 }
+
 void Grid::project() {
     int N = CellCountX;
     float h = 1.0f / N;
@@ -241,18 +237,23 @@ void Grid::project() {
     std::vector<std::vector<float>> div(N+2, std::vector<float>(N+2, 0.0f));
     std::vector<std::vector<float>> p(N+2, std::vector<float>(N+2, 0.0f));
 
-    // Calculate divergence
+    // FIXED: Calculate divergence using proper staggered grid indexing
+    // For cell (i,j), the divergence is:
+    // div = (u_right - u_left) / h + (v_top - v_bottom) / h
     for (int i = 1; i <= N; i++) {
         for (int j = 1; j <= N; j++) {
-            div[i][j] = -0.5f * h * (u[i][j] - u[i-1][j] +
-                                    v[i][j] - v[i][j-1]);
+            // u[i][j] is velocity at right face of cell (i,j)
+            // u[i-1][j] is velocity at left face of cell (i,j)
+            // v[i][j] is velocity at top face of cell (i,j)
+            // v[i][j-1] is velocity at bottom face of cell (i,j)
+            div[i][j] = -0.5f * h * ((u[i][j] - u[i-1][j]) + (v[i][j] - v[i][j-1]));
             p[i][j] = 0;
         }
     }
     set_bnd(0, div);
     set_bnd(0, p);
 
-    // Solve pressure using Gauss-Seidel
+    // Solve for pressure using Gauss-Seidel
     for (int k = 0; k < 20; k++) {
         for (int i = 1; i <= N; i++) {
             for (int j = 1; j <= N; j++) {
@@ -263,72 +264,23 @@ void Grid::project() {
         set_bnd(0, p);
     }
 
-    // Subtract pressure gradient
-    for (int i = 1; i <= N; i++) {
+    // FIXED: Subtract pressure gradient at proper locations
+    // For u[i][j] (velocity at face between cells i and i+1):
+    // gradient = (p[i+1][j] - p[i][j]) / h
+    for (int i = 1; i < N; i++) {
         for (int j = 1; j <= N; j++) {
-            u[i][j] -= 0.5f * (p[i+1][j] - p[i-1][j]) / h;
-            v[i][j] -= 0.5f * (p[i][j+1] - p[i][j-1]) / h;
+            u[i][j] -= 0.5f * (p[i+1][j] - p[i][j]) / h;
         }
     }
+
+    // For v[i][j] (velocity at face between cells j and j+1):
+    // gradient = (p[i][j+1] - p[i][j]) / h
+    for (int i = 1; i <= N; i++) {
+        for (int j = 1; j < N; j++) {
+            v[i][j] -= 0.5f * (p[i][j+1] - p[i][j]) / h;
+        }
+    }
+
     set_bnd(1, u);
-    set_bnd(2, v);
-}
-
-void Grid::advect_velocity(float dt) {
-    int NX = CellCountX;
-    int NY = CellCountY;
-    float dt0_x = dt * NX;
-    float dt0_y = dt * NY;
-
-    // Advect u component (needs interpolation since u is at different locations)
-    std::vector<std::vector<float>> u_old = u;
-    for (int i = 1; i <= NX; ++i) {
-        for (int j = 1; j <= NY; ++j) {
-            // u is stored at (i, j+0.5) - need to interpolate velocities to this location
-            float vel_u = u_old[i][j];
-            float vel_v = 0.5f * (v[i][j] + v[i-1][j]); // Interpolate v to u location
-
-            float x = i - dt0_x * vel_u;
-            float y = (j + 0.5f) - dt0_y * vel_v; // Account for u's y-position
-
-            if (x < 0.5f) x = 0.5f; if (x > NX + 0.5f) x = NX + 0.5f;
-            if (y < 0.5f) y = 0.5f; if (y > NY + 0.5f) y = NY + 0.5f;
-
-            int i0 = (int)x, i1 = i0 + 1;
-            int j0 = (int)y, j1 = j0 + 1;
-
-            float s1 = x - i0, s0 = 1.0f - s1;
-            float t1 = y - j0, t0 = 1.0f - t1;
-
-            u[i][j] = s0 * (t0 * u_old[i0][j0] + t1 * u_old[i0][j1]) +
-                      s1 * (t0 * u_old[i1][j0] + t1 * u_old[i1][j1]);
-        }
-    }
-    set_bnd(1, u);
-
-    // Advect v component (needs interpolation since v is at different locations)
-    std::vector<std::vector<float>> v_old = v;
-    for (int i = 1; i <= NX; ++i) {
-        for (int j = 1; j <= NY; ++j) {
-            // v is stored at (i+0.5, j) - need to interpolate velocities to this location
-            float vel_u = 0.5f * (u[i][j] + u[i][j+1]); // Interpolate u to v location
-            float vel_v = v_old[i][j];
-
-            float x = (i + 0.5f) - dt0_x * vel_u; // Account for v's x-position
-            float y = j - dt0_y * vel_v;
-
-            if (x < 0.5f) x = 0.5f; if (x > NX + 0.5f) x = NX + 0.5f;
-            if (y < 0.5f) y = 0.5f; if (y > NY + 0.5f) y = NY + 0.5f;
-
-            int i0 = (int)x, i1 = i0 + 1;
-            int j0 = (int)y, j1 = j0 + 1;
-
-            float s1 = x - i0, s0 = 1.0f - s1;
-            float t1 = y - j0, t0 = 1.0f - t1;
-
-            v[i][j] = s0 * (t0 * v_old[i0][j0] + t1 * v_old[i0][j1]) +
-                      s1 * (t0 * v_old[i1][j0] + t1 * v_old[i1][j1]);
-        }
-    }
     set_bnd(2, v);
 }

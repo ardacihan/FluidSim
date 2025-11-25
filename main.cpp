@@ -13,8 +13,8 @@
 // =============================================================================
 
 // Grid dimensions
-const int GRID_COLS = 192;
-const int GRID_ROWS = 108;
+const int GRID_COLS = 10;
+const int GRID_ROWS = 10;
 
 // Window settings - High resolution fullscreen
 const int WINDOW_WIDTH = 1920;
@@ -215,18 +215,16 @@ void drawFlowVectors(ImDrawList* draw_list, const Grid& grid, float cellSize,
 }
 
 void addDensityAtMouse(Grid& grid, float mouseX, float mouseY, float startX, float startY, float cellSize) {
-    // Convert mouse position to grid coordinates
     float gridX = (mouseX - startX) / cellSize;
     float gridY = (mouseY - startY) / cellSize;
 
-    // Check if mouse is within grid bounds (excluding walls)
     if (gridX >= 1.0f && gridX <= grid.CellCountX + 1.0f &&
         gridY >= 1.0f && gridY <= grid.CellCountY + 1.0f) {
 
         int centerI = static_cast<int>(gridX);
         int centerJ = static_cast<int>(gridY);
 
-        // Add density in a circular area around the mouse
+        // ENSURE WE STAY WITHIN DENSITY ARRAY BOUNDS
         for (int i = std::max(1, centerI - static_cast<int>(MOUSE_RADIUS));
              i <= std::min(grid.CellCountX, centerI + static_cast<int>(MOUSE_RADIUS));
              ++i) {
@@ -234,19 +232,18 @@ void addDensityAtMouse(Grid& grid, float mouseX, float mouseY, float startX, flo
                  j <= std::min(grid.CellCountY, centerJ + static_cast<int>(MOUSE_RADIUS));
                  ++j) {
 
-                // Calculate distance from mouse center
-                float dist = std::sqrt((i - gridX) * (i - gridX) + (j - gridY) * (j - gridY));
-
-                if (dist <= MOUSE_RADIUS) {
-                    // Add more density closer to center (inverse square falloff)
-                    float falloff = 1.0f - (dist / MOUSE_RADIUS);
-                    grid.d[i][j] += MOUSE_DENSITY_AMOUNT * falloff * falloff;
+                // ADD ARRAY BOUNDS CHECK
+                if (i < grid.d.size() && j < grid.d[0].size()) {
+                    float dist = std::sqrt((i - gridX) * (i - gridX) + (j - gridY) * (j - gridY));
+                    if (dist <= MOUSE_RADIUS) {
+                        float falloff = 1.0f - (dist / MOUSE_RADIUS);
+                        grid.d[i][j] += MOUSE_DENSITY_AMOUNT * falloff * falloff;
+                    }
                 }
             }
         }
     }
 }
-
 void addVelocityAtMouse(Grid& grid, float mouseX, float mouseY, float velX, float velY,
                        float startX, float startY, float cellSize) {
     // Convert mouse position to grid coordinates
