@@ -1,38 +1,69 @@
-#include <GL/glew.h> // Must be before GLFW
+#include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
-
 #include <iostream>
 #include <vector>
 #include <cmath>
-#include "Grid3D.h" // Your header file
+#include "Grid3D.h"
 
 // --- Configuration ---
-const int GRID_SIZE = 32; // N x N x N
-const int WINDOW_WIDTH = 1280;
-const int WINDOW_HEIGHT = 720;
+struct Config {
+    static const int GRID_SIZE = 32;
+    static const int WINDOW_WIDTH = 1280;
+    static const int WINDOW_HEIGHT = 720;
+};
 
-// --- Camera State ---
-float camRotX = 30.0f;
-float camRotY = -45.0f;
-float camDist = 80.0f;
-ImVec2 lastMousePos;
-bool isDragging = false;
+// --- Global State ---
+struct CameraState {
+    float rotX = 30.0f;
+    float rotY = -45.0f;
+    float distance = 80.0f;
+    ImVec2 lastMousePos;
+    bool isDragging = false;
+};
 
-// --- Simulation State ---
-float sim_dt = 0.1f;
-float sim_diff = 0.0001f;
-float sim_visc = 0.0001f;
-bool isRunning = true;
+struct SimulationState {
+    float dt = 0.1f;
+    float diff = 0.0001f;
+    float visc = 0.0001f;
+    bool isRunning = true;
+    bool showDivergence = false;
+    bool showVelocityVectors = true;
+    float vectorScale = 2.0f;
+};
 
-// Helper to draw a single cube
-void drawCube(float x, float y, float z, float size, float r, float g, float b, float alpha) {
+// --- Forward Declarations ---
+namespace Graphics {
+    void drawCube(float x, float y, float z, float size, float r, float g, float b, float alpha);
+    void drawWireframeBox(float size);
+    void setupPerspective(int width, int height);
+    void setupCamera(const CameraState& camera);
+    void renderScene(Grid3D& grid, const SimulationState& state);
+}
+
+namespace UI {
+    void setupImGui(GLFWwindow* window);
+    void renderImGui(Grid3D& grid, SimulationState& state, CameraState& camera);
+}
+
+namespace Input {
+    void handleCameraInput(CameraState& camera);
+}
+
+namespace App {
+    GLFWwindow* initializeWindow();
+    void initializeGraphics();
+    void mainLoop(GLFWwindow* window, Grid3D& grid, CameraState& camera, SimulationState& state);
+    void shutdown(GLFWwindow* window);
+}
+
+// --- Graphics Implementation ---
+void Graphics::drawCube(float x, float y, float z, float size, float r, float g, float b, float alpha) {
     glPushMatrix();
     glTranslatef(x, y, z);
     glScalef(size, size, size);
-
     glColor4f(r, g, b, alpha);
 
     glBegin(GL_QUADS);
@@ -59,14 +90,12 @@ void drawCube(float x, float y, float z, float size, float r, float g, float b, 
     glPopMatrix();
 }
 
-// Draw the bounding box wireframe
-void drawWireframeBox(float size) {
+void Graphics::drawWireframeBox(float size) {
     glPushMatrix();
     glScalef(size, size, size);
     glColor3f(1.0f, 1.0f, 1.0f);
     glLineWidth(2.0f);
 
-    // Simple wireframe cube
     glBegin(GL_LINES);
     // Bottom rect
     glVertex3f(0,0,0); glVertex3f(1,0,0);
@@ -88,205 +117,327 @@ void drawWireframeBox(float size) {
     glPopMatrix();
 }
 
-GLFWwindow* init_opengl() {
-    if (!glfwInit()) {
-        std::cerr << "Failed to initialize GLFW" << std::endl;
-       return NULL;
-    }
+void Graphics::setupPerspective(int width, int height) {
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
 
-    // Set OpenGL version
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
-    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE); // Needed for macOS
+    float aspect = (float)width / (float)height;
+    float nearPlane = 1.0f;
+    float farPlane = 500.0f;
+    float fieldOfView = 60.0f;
+    float fH = tan(fieldOfView / 360.0f * 3.14159f) * nearPlane;
+    float fW = fH * aspect;
 
-    GLFWwindow* window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "3D Fluid Simulation", NULL, NULL);
-    if (!window) {
-        glfwTerminate();
-        return NULL;
-    }
-
-    glfwMakeContextCurrent(window);
-    glfwSwapInterval(1); // Enable V-Sync
-
-    // Initialize GLEW
-    glewExperimental = GL_TRUE; // Needed for core profile
-    if (glewInit() != GLEW_OK) {
-        glfwDestroyWindow(window);
-        glfwTerminate();
-        return NULL;
-    }
-
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO(); (void)io;
-
-    // Initialize ImGui GLFW and OpenGL3
-    if (!ImGui_ImplGlfw_InitForOpenGL(window, true)) {
-        std::cerr << "Failed to initialize ImGui GLFW backend" << std::endl;
-        return NULL;
-    }
-
-    // Try different GLSL versions
-    const char* glsl_version = "#version 130";
-    if (!ImGui_ImplOpenGL3_Init(glsl_version)) {
-        glsl_version = "#version 120";
-        if (!ImGui_ImplOpenGL3_Init(glsl_version)) {
-            std::cerr << "Failed to initialize ImGui OpenGL3 backend" << std::endl;
-            return NULL;
-        }
-    }
-
-    ImGui::StyleColorsDark();
-    return window;
+    glFrustum(-fW, fW, -fH, fH, nearPlane, farPlane);
 }
 
-int main() {
+void Graphics::setupCamera(const CameraState& camera) {
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
 
-    GLFWwindow* window = init_opengl();
+    glTranslatef(0.0f, 0.0f, -camera.distance);
+    glRotatef(camera.rotX, 1.0f, 0.0f, 0.0f);
+    glRotatef(camera.rotY, 0.0f, 1.0f, 0.0f);
+    glTranslatef(-(float)Config::GRID_SIZE/2.0f, -(float)Config::GRID_SIZE/2.0f, -(float)Config::GRID_SIZE/2.0f);
+}
 
-    // Initialize 3D Grid
-    std::cout << "Initializing Grid3D..." << std::endl;
-    Grid3D grid(GRID_SIZE, sim_diff, sim_visc, sim_dt);
+void Graphics::renderScene(Grid3D& grid, const SimulationState& state) {
+    // Draw Grid Boundary
+    drawWireframeBox((float)Config::GRID_SIZE);
 
-    // OpenGL Global State
-    glEnable(GL_DEPTH_TEST); // Enable depth buffering
-    glEnable(GL_BLEND);      // Enable transparency
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    // Enable lighting for better 3D effect
-    glEnable(GL_LIGHT0);
-    glEnable(GL_LIGHTING);
-    glEnable(GL_COLOR_MATERIAL);
-    glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
-
-
-
-
-    std::cout << "Entering main loop..." << std::endl;
-
-    while (!glfwWindowShouldClose(window)) {
-        glfwPollEvents();
-
-        // --- Input Handling (Camera) ---
-        if (!ImGui::GetIO().WantCaptureMouse) {
-            if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
-                ImVec2 mousePos = ImGui::GetMousePos();
-                if (!isDragging) {
-                    isDragging = true;
-                    lastMousePos = mousePos;
-                }
-                float dx = mousePos.x - lastMousePos.x;
-                float dy = mousePos.y - lastMousePos.y;
-                camRotY += dx * 0.5f;
-                camRotX += dy * 0.5f;
-                lastMousePos = mousePos;
-            } else {
-                isDragging = false;
-            }
-            camDist -= ImGui::GetIO().MouseWheel * 5.0f;
-            if (camDist < 10.0f) camDist = 10.0f;
-        }
-
-        // --- Simulation Step ---
-        // Update grid parameters in case slider changed
-        grid.dt = sim_dt;
-        grid.diff = sim_diff;
-        grid.visc = sim_visc;
-
-        if (isRunning) {
-            grid.step(); // Simulate steps
-        }
-
-        // --- Rendering ---
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
-
-        int display_w, display_h;
-        glfwGetFramebufferSize(window, &display_w, &display_h);
-        glViewport(0, 0, display_w, display_h);
-
-        glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        glMatrixMode(GL_PROJECTION);
-        glLoadIdentity();
-        float aspect = (float)display_w / (float)display_h;
-
-        // Use gluPerspective or manual perspective
-        // For now, use simple manual perspective
-        float nearPlane = 1.0f;
-        float farPlane = 500.0f;
-        float fieldOfView = 60.0f;
-        float fH = tan(fieldOfView / 360.0f * 3.14159f) * nearPlane;
-        float fW = fH * aspect;
-
-        glFrustum(-fW, fW, -fH, fH, nearPlane, farPlane);
-
-        // Setup ModelView Matrix (Camera)
-        glMatrixMode(GL_MODELVIEW);
-        glLoadIdentity();
-        glTranslatef(0.0f, 0.0f, -camDist);
-        glRotatef(camRotX, 1.0f, 0.0f, 0.0f);
-        glRotatef(camRotY, 0.0f, 1.0f, 0.0f);
-
-        // Center the grid
-        glTranslatef(-(float)GRID_SIZE/2.0f, -(float)GRID_SIZE/2.0f, -(float)GRID_SIZE/2.0f);
-
-        // Draw Grid Boundary
-        drawWireframeBox((float)GRID_SIZE);
-
-
-        // Draw Voxels
-        for(int k=1; k<=grid.N; k++) {
-            for(int j=1; j<=grid.N; j++) {
-                for(int i=1; i<=grid.N; i++) {
-                    float d = grid.dens[grid.IX(i, j, k)];
-
-                    // Only draw if density is visible
+    // Draw Voxels
+    for(int k = 1; k <= grid.N; k++) {
+        for(int j = 1; j <= grid.N; j++) {
+            for(int i = 1; i <= grid.N; i++) {
+                if (state.showDivergence) {
+                    // Draw divergence visualization
+                    std::vector<float> color = grid.getDivergenceColor(i, j, k, 0.01f);
+                    if (color[3] > 0.01f) {
+                        drawCube((float)i + 0.5f, (float)j + 0.5f, (float)k + 0.5f,
+                                0.85f, color[0], color[1], color[2], color[3]);
+                    }
+                } else {
+                    // Draw density visualization
+                    float d = grid.dens[grid.P_IX(i, j, k)];
                     if (d > 0.05f) {
-                        // Position logic: i,j,k corresponds to cell center
-                        // 0.5 offset to center coordinates
-                        // Color mapping: Blue -> Cyan -> White based on density
-                        float alpha = std::min(d/100.0f, 0.8f); // Normalize alpha
+                        float alpha = std::min(d/100.0f, 0.8f);
                         float blue = 1.0f;
                         float green = std::min(d/100.0f, 1.0f);
                         float red = std::min(d/200.0f, 1.0f);
-
-                        // Scale slightly < 1.0 to see gaps between cells
                         drawCube((float)i + 0.5f, (float)j + 0.5f, (float)k + 0.5f,
                                 0.85f, red, green, blue, alpha);
                     }
                 }
             }
         }
+    }
+}
 
-        // --- UI Overlay ---
-        ImGui::Begin("3D Fluid Controls");
-        ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
-        ImGui::Checkbox("Running", &isRunning);
-        if (ImGui::Button("Reset")) {
-            grid = Grid3D(GRID_SIZE, sim_diff, sim_visc, sim_dt);
+
+
+// --- Input Handling ---
+void Input::handleCameraInput(CameraState& camera) {
+    if (!ImGui::GetIO().WantCaptureMouse) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+            ImVec2 mousePos = ImGui::GetMousePos();
+            if (!camera.isDragging) {
+                camera.isDragging = true;
+                camera.lastMousePos = mousePos;
+            }
+            float dx = mousePos.x - camera.lastMousePos.x;
+            float dy = mousePos.y - camera.lastMousePos.y;
+            camera.rotY += dx * 0.5f;
+            camera.rotX += dy * 0.5f;
+            camera.lastMousePos = mousePos;
+        } else {
+            camera.isDragging = false;
         }
-        ImGui::Separator();
-        ImGui::SliderFloat("Viscosity", &sim_visc, 0.0f, 0.001f, "%.5f");
-        ImGui::SliderFloat("Diffusion", &sim_diff, 0.0f, 0.001f, "%.5f");
-        ImGui::SliderFloat("Time Step", &sim_dt, 0.0f, 0.5f);
-        ImGui::Separator();
-        ImGui::End();
 
-        ImGui::Render();
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        camera.distance -= ImGui::GetIO().MouseWheel * 5.0f;
+        if (camera.distance < 10.0f) camera.distance = 10.0f;
+    }
+}
 
-        glfwSwapBuffers(window);
+// --- UI Implementation ---
+void UI::setupImGui(GLFWwindow* window) {
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    (void)io;
+
+    if (!ImGui_ImplGlfw_InitForOpenGL(window, true)) {
+        std::cerr << "Failed to initialize ImGui GLFW backend" << std::endl;
+        return;
     }
 
+    const char* glsl_version = "#version 130";
+    if (!ImGui_ImplOpenGL3_Init(glsl_version)) {
+        glsl_version = "#version 120";
+        if (!ImGui_ImplOpenGL3_Init(glsl_version)) {
+            std::cerr << "Failed to initialize ImGui OpenGL3 backend" << std::endl;
+            return;
+        }
+    }
+
+    ImGui::StyleColorsDark();
+}
+
+void UI::renderImGui(Grid3D& grid, SimulationState& state, CameraState& camera) {
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+
+    ImGui::Begin("3D Fluid Controls");
+    ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+
+    // Simulation controls
+    ImGui::Separator();
+    ImGui::Text("Simulation:");
+    ImGui::Checkbox("Running", &state.isRunning);
+    ImGui::Checkbox("Show Divergence", &state.showDivergence);
+
+    // Velocity controls
+    ImGui::Separator();
+    ImGui::Text("Velocity Initialization (Staggered Grid):");
+
+    if (ImGui::Button("Clear All Velocities")) {
+        grid.clearAllVelocities();
+    }
+
+    if (ImGui::Button("Random Staggered")) {
+        grid.initRandomStaggeredVelocities(0.5f);
+    }
+
+    // Density controls
+    ImGui::Separator();
+    ImGui::Text("Density Controls:");
+
+    if (ImGui::Button("Add Random Density")) {
+        int x = rand() % grid.N + 1;
+        int y = rand() % grid.N + 1;
+        int z = rand() % grid.N + 1;
+        grid.add_density(x, y, z, 100.0f);
+    }
+
+    if (ImGui::Button("Add Random Velocity")) {
+        int x = rand() % grid.N + 1;
+        int y = rand() % grid.N + 1;
+        int z = rand() % grid.N + 1;
+        grid.add_velocity(x, y, z,
+            (rand() / (float)RAND_MAX) * 2.0f - 1.0f,
+            (rand() / (float)RAND_MAX) * 2.0f - 1.0f,
+            (rand() / (float)RAND_MAX) * 2.0f - 1.0f);
+    }
+
+    if (ImGui::Button("Reset Everything")) {
+        grid = Grid3D(Config::GRID_SIZE, state.diff, state.visc, state.dt);
+    }
+
+    // Simulation parameters
+    ImGui::Separator();
+    ImGui::Text("Parameters:");
+    ImGui::SliderFloat("Viscosity", &state.visc, 0.0f, 0.001f, "%.5f");
+    ImGui::SliderFloat("Diffusion", &state.diff, 0.0f, 0.001f, "%.5f");
+    ImGui::SliderFloat("Time Step", &state.dt, 0.0f, 0.5f);
+
+    // Camera controls
+    ImGui::Separator();
+    ImGui::Text("Camera:");
+    ImGui::SliderFloat("Rotation X", &camera.rotX, -180.0f, 180.0f);
+    ImGui::SliderFloat("Rotation Y", &camera.rotY, -180.0f, 180.0f);
+    ImGui::SliderFloat("Distance", &camera.distance, 10.0f, 200.0f);
+
+    // Divergence status
+    ImGui::Separator();
+    ImGui::Text("Status:");
+    if (grid.checkDivergence(1e-2f)) {
+        ImGui::TextColored(ImVec4(0, 1, 0, 1), "✓ Divergence: OK (incompressible)");
+    } else {
+        ImGui::TextColored(ImVec4(1, 0, 0, 1), "✗ Divergence: BAD (not incompressible)");
+    }
+
+    ImGui::Text("Grid Size: %d x %d x %d", grid.N, grid.N, grid.N);
+    ImGui::Text("Using: Staggered MAC Grid");
+
+    ImGui::End();
+
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+}
+
+// --- App Implementation ---
+GLFWwindow* App::initializeWindow() {
+    if (!glfwInit()) {
+        std::cerr << "Failed to initialize GLFW" << std::endl;
+        return nullptr;
+    }
+
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+
+    GLFWwindow* window = glfwCreateWindow(
+        Config::WINDOW_WIDTH,
+        Config::WINDOW_HEIGHT,
+        "3D Fluid Simulation (Staggered MAC Grid)",
+        NULL, NULL
+    );
+
+    if (!window) {
+        glfwTerminate();
+        return nullptr;
+    }
+
+    glfwMakeContextCurrent(window);
+    glfwSwapInterval(1);
+
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK) {
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return nullptr;
+    }
+
+    return window;
+}
+
+void App::initializeGraphics() {
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    glEnable(GL_LIGHT0);
+    glEnable(GL_LIGHTING);
+    glEnable(GL_COLOR_MATERIAL);
+    glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
+}
+
+void App::mainLoop(GLFWwindow* window, Grid3D& grid, CameraState& camera, SimulationState& state) {
+    while (!glfwWindowShouldClose(window)) {
+        glfwPollEvents();
+
+        // Handle input
+        Input::handleCameraInput(camera);
+
+        // Update simulation
+        grid.dt = state.dt;
+        grid.diff = state.diff;
+        grid.visc = state.visc;
+
+        if (state.isRunning) {
+            grid.step();
+        }
+
+        // Get window dimensions
+        int display_w, display_h;
+        glfwGetFramebufferSize(window, &display_w, &display_h);
+        glViewport(0, 0, display_w, display_h);
+
+        // Clear screen
+        glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // Setup view
+        Graphics::setupPerspective(display_w, display_h);
+        Graphics::setupCamera(camera);
+
+        // Render 3D scene
+        Graphics::renderScene(grid, state);
+
+        // Render UI
+        UI::renderImGui(grid, state, camera);
+
+        // Swap buffers
+        glfwSwapBuffers(window);
+    }
+}
+
+void App::shutdown(GLFWwindow* window) {
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
+
     glfwDestroyWindow(window);
     glfwTerminate();
+}
+
+// --- Main Function ---
+int main() {
+    // Initialize window
+    GLFWwindow* window = App::initializeWindow();
+    if (!window) {
+        return -1;
+    }
+
+    // Setup ImGui
+    UI::setupImGui(window);
+
+    // Setup graphics
+    App::initializeGraphics();
+
+    // Create simulation grid with staggered MAC grid
+    Grid3D grid(Config::GRID_SIZE, 0.0001f, 0.0001f, 0.1f);
+
+    // Initialize state
+    CameraState camera;
+    SimulationState state;
+
+    std::cout << "Starting 3D Fluid Simulation with Staggered MAC Grid..." << std::endl;
+    std::cout << "Grid configuration:" << std::endl;
+    std::cout << "  - Pressure cells: " << Config::GRID_SIZE << "^3" << std::endl;
+    std::cout << "  - u faces: " << (Config::GRID_SIZE+1) << " x " << (Config::GRID_SIZE+2) << " x " << (Config::GRID_SIZE+2) << std::endl;
+    std::cout << "  - v faces: " << (Config::GRID_SIZE+2) << " x " << (Config::GRID_SIZE+1) << " x " << (Config::GRID_SIZE+2) << std::endl;
+    std::cout << "  - w faces: " << (Config::GRID_SIZE+2) << " x " << (Config::GRID_SIZE+2) << " x " << (Config::GRID_SIZE+1) << std::endl;
+    std::cout << "\nControls:" << std::endl;
+    std::cout << "  - Right-click and drag to rotate camera" << std::endl;
+    std::cout << "  - Mouse wheel to zoom" << std::endl;
+
+    // Run main loop
+    App::mainLoop(window, grid, camera, state);
+
+    // Cleanup
+    App::shutdown(window);
 
     std::cout << "Clean shutdown" << std::endl;
     return 0;
