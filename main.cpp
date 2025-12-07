@@ -88,16 +88,13 @@ void drawWireframeBox(float size) {
     glPopMatrix();
 }
 
-int main() {
-    // Debug output to see where it crashes
-    std::cout << "Starting FluidSim..." << std::endl;
-
+GLFWwindow* init_opengl() {
     if (!glfwInit()) {
         std::cerr << "Failed to initialize GLFW" << std::endl;
-        return -1;
+       return NULL;
     }
 
-    // Set OpenGL version - IMPORTANT: Use Compatibility Profile
+    // Set OpenGL version
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
@@ -105,31 +102,21 @@ int main() {
 
     GLFWwindow* window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "3D Fluid Simulation", NULL, NULL);
     if (!window) {
-        std::cerr << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
-        return -1;
+        return NULL;
     }
 
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1); // Enable V-Sync
 
-    std::cout << "Initializing GLEW..." << std::endl;
-
     // Initialize GLEW
     glewExperimental = GL_TRUE; // Needed for core profile
     if (glewInit() != GLEW_OK) {
-        std::cerr << "Failed to initialize GLEW" << std::endl;
         glfwDestroyWindow(window);
         glfwTerminate();
-        return -1;
+        return NULL;
     }
 
-    // Print OpenGL version
-    std::cout << "OpenGL Version: " << glGetString(GL_VERSION) << std::endl;
-    std::cout << "GLEW Version: " << glewGetString(GLEW_VERSION) << std::endl;
-
-    // Setup ImGui
-    std::cout << "Setting up ImGui..." << std::endl;
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
@@ -137,21 +124,26 @@ int main() {
     // Initialize ImGui GLFW and OpenGL3
     if (!ImGui_ImplGlfw_InitForOpenGL(window, true)) {
         std::cerr << "Failed to initialize ImGui GLFW backend" << std::endl;
-        return -1;
+        return NULL;
     }
 
     // Try different GLSL versions
     const char* glsl_version = "#version 130";
     if (!ImGui_ImplOpenGL3_Init(glsl_version)) {
-        // Try older version
         glsl_version = "#version 120";
         if (!ImGui_ImplOpenGL3_Init(glsl_version)) {
             std::cerr << "Failed to initialize ImGui OpenGL3 backend" << std::endl;
-            return -1;
+            return NULL;
         }
     }
 
     ImGui::StyleColorsDark();
+    return window;
+}
+
+int main() {
+
+    GLFWwindow* window = init_opengl();
 
     // Initialize 3D Grid
     std::cout << "Initializing Grid3D..." << std::endl;
@@ -168,9 +160,8 @@ int main() {
     glEnable(GL_COLOR_MATERIAL);
     glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
 
-    // Source controls (Where we inject fluid)
-    int srcX = GRID_SIZE/2, srcY = 2, srcZ = GRID_SIZE/2;
-    float densityAmount = 100.0f;
+
+
 
     std::cout << "Entering main loop..." << std::endl;
 
@@ -204,12 +195,7 @@ int main() {
         grid.visc = sim_visc;
 
         if (isRunning) {
-            // Constant injection for testing
-            grid.add_density(srcX, srcY, srcZ, densityAmount);
-            // Add some upward velocity at the source (like smoke)
-            grid.add_velocity(srcX, srcY, srcZ, 0.0f, 50.0f, 0.0f);
-
-            grid.step();
+            grid.step(); // Simulate steps
         }
 
         // --- Rendering ---
@@ -224,7 +210,6 @@ int main() {
         glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // Setup Projection Matrix
         glMatrixMode(GL_PROJECTION);
         glLoadIdentity();
         float aspect = (float)display_w / (float)display_h;
@@ -252,8 +237,6 @@ int main() {
         // Draw Grid Boundary
         drawWireframeBox((float)GRID_SIZE);
 
-        // Draw Source Marker
-        drawCube(srcX + 0.5f, srcY + 0.5f, srcZ + 0.5f, 1.1f, 1.0f, 0.0f, 0.0f, 0.8f);
 
         // Draw Voxels
         for(int k=1; k<=grid.N; k++) {
@@ -291,11 +274,6 @@ int main() {
         ImGui::SliderFloat("Diffusion", &sim_diff, 0.0f, 0.001f, "%.5f");
         ImGui::SliderFloat("Time Step", &sim_dt, 0.0f, 0.5f);
         ImGui::Separator();
-        ImGui::Text("Source Position");
-        ImGui::SliderInt("Src X", &srcX, 1, GRID_SIZE);
-        ImGui::SliderInt("Src Y", &srcY, 1, GRID_SIZE);
-        ImGui::SliderInt("Src Z", &srcZ, 1, GRID_SIZE);
-        ImGui::SliderFloat("Inject Amount", &densityAmount, 0.0f, 500.0f);
         ImGui::End();
 
         ImGui::Render();
