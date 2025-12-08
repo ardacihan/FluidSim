@@ -240,21 +240,7 @@ public:
         project();
     }
 
-private:
-
-    bool is_solid(int x, int y, int z) {
-        if (x==0 || y==0 || z==0 || x==N || y==N || z==N) {
-            return true;
-        }
-        return false;
-
-    }
-
-    void set_bnd(int b, std::vector<float>& x, int size_x, int size_y, int size_z) {
-    }
-
-
-    // Interpolate density (cell-centered quantity)
+    // PUBLIC interpolation functions for visualization
     float interpolate_density(float x, float y, float z) const {
         x = std::max(0.5f, std::min((float)N + 0.5f, x));
         y = std::max(0.5f, std::min((float)N + 0.5f, y));
@@ -282,89 +268,101 @@ private:
                s*t*u*dens_old[P_IX(i+1, j+1, k+1)];
     }
 
-    float interpolate_u(float x, float y, float z) const {
-        x = std::max(0.5f, std::min((float)N + 0.5f, x));
-        y = std::max(0.5f, std::min((float)N + 1.5f, y));
-        z = std::max(0.5f, std::min((float)N + 1.5f, z));
+float interpolate_u(float x, float y, float z) const {
+    x = std::max(0.5f, std::min((float)N + 0.5f, x));
+    y = std::max(0.5f, std::min((float)N + 1.5f, y));
+    z = std::max(0.5f, std::min((float)N + 1.5f, z));
 
-        int i = (int)floor(x - 0.5f);
-        int j = (int)floor(y - 0.5f);
-        int k = (int)floor(z - 0.5f);
+    int i = (int)floor(x - 0.5f);
+    int j = (int)floor(y - 0.5f);
+    int k = (int)floor(z - 0.5f);
 
-        float s = (x - 0.5f) - i;
-        float t = (y - 0.5f) - j;
-        float u = (z - 0.5f) - k;
+    float s = (x - 0.5f) - i;
+    float t = (y - 0.5f) - j;
+    float uu = (z - 0.5f) - k;  // Renamed from u to avoid name conflict
 
-        i = std::max(0, std::min(N, i));
-        j = std::max(0, std::min(N+1, j));
-        k = std::max(0, std::min(N+1, k));
+    i = std::max(0, std::min(N, i));
+    j = std::max(0, std::min(N+1, j));
+    k = std::max(0, std::min(N+1, k));
 
-        return (1-s)*(1-t)*(1-u)*u_old[U_IX(i, j, k)] +
-               s*(1-t)*(1-u)*u_old[U_IX(i+1, j, k)] +
-               (1-s)*t*(1-u)*u_old[U_IX(i, j+1, k)] +
-               s*t*(1-u)*u_old[U_IX(i+1, j+1, k)] +
-               (1-s)*(1-t)*u*u_old[U_IX(i, j, k+1)] +
-               s*(1-t)*u*u_old[U_IX(i+1, j, k+1)] +
-               (1-s)*t*u*u_old[U_IX(i, j+1, k+1)] +
-               s*t*u*u_old[U_IX(i+1, j+1, k+1)];
+    // Use current u array instead of u_old
+    return (1-s)*(1-t)*(1-uu)*u[U_IX(i, j, k)] +
+           s*(1-t)*(1-uu)*u[U_IX(i+1, j, k)] +
+           (1-s)*t*(1-uu)*u[U_IX(i, j+1, k)] +
+           s*t*(1-uu)*u[U_IX(i+1, j+1, k)] +
+           (1-s)*(1-t)*uu*u[U_IX(i, j, k+1)] +
+           s*(1-t)*uu*u[U_IX(i+1, j, k+1)] +
+           (1-s)*t*uu*u[U_IX(i, j+1, k+1)] +
+           s*t*uu*u[U_IX(i+1, j+1, k+1)];
+}
+
+float interpolate_v(float x, float y, float z) const {
+    x = std::max(0.5f, std::min((float)N + 1.5f, x));
+    y = std::max(0.5f, std::min((float)N + 0.5f, y));
+    z = std::max(0.5f, std::min((float)N + 1.5f, z));
+
+    int i = (int)floor(x - 0.5f);
+    int j = (int)floor(y - 0.5f);
+    int k = (int)floor(z - 0.5f);
+
+    float s = (x - 0.5f) - i;
+    float t = (y - 0.5f) - j;
+    float uu = (z - 0.5f) - k;  // Renamed from u to avoid name conflict
+
+    i = std::max(0, std::min(N+1, i));
+    j = std::max(0, std::min(N, j));
+    k = std::max(0, std::min(N+1, k));
+
+    // Use current v array instead of v_old
+    return (1-s)*(1-t)*(1-uu)*v[V_IX(i, j, k)] +
+           s*(1-t)*(1-uu)*v[V_IX(i+1, j, k)] +
+           (1-s)*t*(1-uu)*v[V_IX(i, j+1, k)] +
+           s*t*(1-uu)*v[V_IX(i+1, j+1, k)] +
+           (1-s)*(1-t)*uu*v[V_IX(i, j, k+1)] +
+           s*(1-t)*uu*v[V_IX(i+1, j, k+1)] +
+           (1-s)*t*uu*v[V_IX(i, j+1, k+1)] +
+           s*t*uu*v[V_IX(i+1, j+1, k+1)];
+}
+
+float interpolate_w(float x, float y, float z) const {
+    x = std::max(0.5f, std::min((float)N + 1.5f, x));
+    y = std::max(0.5f, std::min((float)N + 1.5f, y));
+    z = std::max(0.5f, std::min((float)N + 0.5f, z));
+
+    int i = (int)floor(x - 0.5f);
+    int j = (int)floor(y - 0.5f);
+    int k = (int)floor(z - 0.5f);
+
+    float s = (x - 0.5f) - i;
+    float t = (y - 0.5f) - j;
+    float uu = (z - 0.5f) - k;  // Renamed from u to avoid name conflict
+
+    i = std::max(0, std::min(N+1, i));
+    j = std::max(0, std::min(N+1, j));
+    k = std::max(0, std::min(N, k));
+
+    // Use current w array instead of w_old
+    return (1-s)*(1-t)*(1-uu)*w[W_IX(i, j, k)] +
+           s*(1-t)*(1-uu)*w[W_IX(i+1, j, k)] +
+           (1-s)*t*(1-uu)*w[W_IX(i, j+1, k)] +
+           s*t*(1-uu)*w[W_IX(i+1, j+1, k)] +
+           (1-s)*(1-t)*uu*w[W_IX(i, j, k+1)] +
+           s*(1-t)*uu*w[W_IX(i+1, j, k+1)] +
+           (1-s)*t*uu*w[W_IX(i, j+1, k+1)] +
+           s*t*uu*w[W_IX(i+1, j+1, k+1)];
+}
+
+private:
+
+    bool is_solid(int x, int y, int z) {
+        if (x==0 || y==0 || z==0 || x==N || y==N || z==N) {
+            return true;
+        }
+        return false;
     }
 
-    // Interpolate v (y-face quantity)
-    float interpolate_v(float x, float y, float z) const {
-        x = std::max(0.5f, std::min((float)N + 1.5f, x));
-        y = std::max(0.5f, std::min((float)N + 0.5f, y));
-        z = std::max(0.5f, std::min((float)N + 1.5f, z));
-
-        int i = (int)floor(x - 0.5f);
-        int j = (int)floor(y - 0.5f);
-        int k = (int)floor(z - 0.5f);
-
-        float s = (x - 0.5f) - i;
-        float t = (y - 0.5f) - j;
-        float u = (z - 0.5f) - k;
-
-        i = std::max(0, std::min(N+1, i));
-        j = std::max(0, std::min(N, j));
-        k = std::max(0, std::min(N+1, k));
-
-        return (1-s)*(1-t)*(1-u)*v_old[V_IX(i, j, k)] +
-               s*(1-t)*(1-u)*v_old[V_IX(i+1, j, k)] +
-               (1-s)*t*(1-u)*v_old[V_IX(i, j+1, k)] +
-               s*t*(1-u)*v_old[V_IX(i+1, j+1, k)] +
-               (1-s)*(1-t)*u*v_old[V_IX(i, j, k+1)] +
-               s*(1-t)*u*v_old[V_IX(i+1, j, k+1)] +
-               (1-s)*t*u*v_old[V_IX(i, j+1, k+1)] +
-               s*t*u*v_old[V_IX(i+1, j+1, k+1)];
+    void set_bnd(int b, std::vector<float>& x, int size_x, int size_y, int size_z) {
     }
-
-    // Interpolate w (z-face quantity)
-    float interpolate_w(float x, float y, float z) const {
-        x = std::max(0.5f, std::min((float)N + 1.5f, x));
-        y = std::max(0.5f, std::min((float)N + 1.5f, y));
-        z = std::max(0.5f, std::min((float)N + 0.5f, z));
-
-        int i = (int)floor(x - 0.5f);
-        int j = (int)floor(y - 0.5f);
-        int k = (int)floor(z - 0.5f);
-
-        float s = (x - 0.5f) - i;
-        float t = (y - 0.5f) - j;
-        float u = (z - 0.5f) - k;
-
-        i = std::max(0, std::min(N+1, i));
-        j = std::max(0, std::min(N+1, j));
-        k = std::max(0, std::min(N, k));
-
-        return (1-s)*(1-t)*(1-u)*w_old[W_IX(i, j, k)] +
-               s*(1-t)*(1-u)*w_old[W_IX(i+1, j, k)] +
-               (1-s)*t*(1-u)*w_old[W_IX(i, j+1, k)] +
-               s*t*(1-u)*w_old[W_IX(i+1, j+1, k)] +
-               (1-s)*(1-t)*u*w_old[W_IX(i, j, k+1)] +
-               s*(1-t)*u*w_old[W_IX(i+1, j, k+1)] +
-               (1-s)*t*u*w_old[W_IX(i, j+1, k+1)] +
-               s*t*u*w_old[W_IX(i+1, j+1, k+1)];
-    }
-
 
     void project() {
     }
