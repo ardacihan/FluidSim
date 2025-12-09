@@ -10,7 +10,7 @@
 
 // --- Configuration ---
 struct Config {
-    static const int GRID_SIZE = 10;
+    static const int GRID_SIZE = 32;
     static const int WINDOW_WIDTH = 1280;
     static const int WINDOW_HEIGHT = 720;
 };
@@ -26,8 +26,8 @@ struct CameraState {
 
 struct SimulationState {
     float dt = 0.01f;
-    float diff = 0.0001f;
-    float visc = 0.0001f;
+    float diff = 0.001f;
+    float visc = 0.001f;
     bool isRunning = false;
     bool showDivergence = false;
     bool showVelocityVectors = false;
