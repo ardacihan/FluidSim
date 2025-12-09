@@ -737,12 +737,6 @@ void UI::renderImGui(Grid3D& grid, SimulationState& state, CameraState& camera) 
     ImGui::Separator();
     ImGui::Text("Flow Status:");
 
-    if (grid.checkDivergence(1e-2f)) {
-        ImGui::TextColored(ImVec4(0, 1, 0, 1), "✓ Incompressible");
-    } else {
-        ImGui::TextColored(ImVec4(1, 0, 0, 1), "✗ Divergent");
-    }
-
     // Reset button
     ImGui::Separator();
     if (ImGui::Button("Reset Everything")) {

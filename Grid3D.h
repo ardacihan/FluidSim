@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <iostream>
 
@@ -239,105 +240,12 @@ public:
         dens_step();
     }
 
-    float divergenceAtCell(int i, int j, int k) const {
-        float du_dx = u[U_IX(i, j, k)] - u[U_IX(i-1, j, k)];  // Forward difference
-        float dv_dy = v[V_IX(i, j, k)] - v[V_IX(i, j-1, k)];  // Forward difference
-        float dw_dz = w[W_IX(i, j, k)] - w[W_IX(i, j, k-1)];  // Forward difference
-
-        return du_dx + dv_dy + dw_dz; // since we use staggered grid we look at 2 faces per dimension
-    }
-
-    bool checkDivergence(float tolerance = 1e-3f) const {
-        for (int k = 1; k <= N; k++) {
-            for (int j = 1; j <= N; j++) {
-                for (int i = 1; i <= N; i++) {
-                    float div = divergenceAtCell(i, j, k);
-                    if (std::abs(div) > tolerance) {
-                        return false;
-                    }
-                }
-            }
-        }
-        return true;
-    }
-
     std::vector<float> getVelocityAtCellCenter(int i, int j, int k) const { // helper function that uses staggered grid for accessing each cell
         float u_avg = 0.5f * (u[U_IX(i-1, j, k)] + u[U_IX(i, j, k)]);
         float v_avg = 0.5f * (v[V_IX(i, j-1, k)] + v[V_IX(i, j, k)]);
         float w_avg = 0.5f * (w[W_IX(i, j, k-1)] + w[W_IX(i, j, k)]);
 
         return {u_avg, v_avg, w_avg};
-    }
-
-    float getVelocityMagnitude(int i, int j, int k) const {
-        auto vel = getVelocityAtCellCenter(i, j, k);
-        return std::sqrt(vel[0]*vel[0] + vel[1]*vel[1] + vel[2]*vel[2]);
-    }
-
-    std::vector<float> getVelocityAtUFace(int i, int j, int k) const {
-        float u_val = u[U_IX(i, j, k)];
-
-        float v_avg = 0.25f * (
-            v[V_IX(i, j-1, k)] + v[V_IX(i, j, k)] +
-            v[V_IX(i+1, j-1, k)] + v[V_IX(i+1, j, k)]
-        );
-
-        float w_avg = 0.25f * (
-            w[W_IX(i, j, k-1)] + w[W_IX(i, j, k)] +
-            w[W_IX(i+1, j, k-1)] + w[W_IX(i+1, j, k)]
-        );
-
-        return {u_val, v_avg, w_avg};
-    }
-
-    std::vector<float> getVelocityAtVFace(int i, int j, int k) const {
-        float u_avg = 0.25f * (
-            u[U_IX(i-1, j, k)] + u[U_IX(i, j, k)] +
-            u[U_IX(i-1, j+1, k)] + u[U_IX(i, j+1, k)]
-        );
-
-        float v_val = v[V_IX(i, j, k)];
-
-        float w_avg = 0.25f * (
-            w[W_IX(i, j, k-1)] + w[W_IX(i, j, k)] +
-            w[W_IX(i, j+1, k-1)] + w[W_IX(i, j+1, k)]
-        );
-
-        return {u_avg, v_val, w_avg};
-    }
-
-    std::vector<float> getVelocityAtWFace(int i, int j, int k) const {
-        float u_avg = 0.25f * (
-            u[U_IX(i-1, j, k)] + u[U_IX(i, j, k)] +
-            u[U_IX(i-1, j, k+1)] + u[U_IX(i, j, k+1)]
-        );
-
-        float v_avg = 0.25f * (
-            v[V_IX(i, j-1, k)] + v[V_IX(i, j, k)] +
-            v[V_IX(i, j-1, k+1)] + v[V_IX(i, j, k+1)]
-        );
-
-        float w_val = w[W_IX(i, j, k)];
-
-        return {u_avg, v_avg, w_val};
-    }
-
-    std::vector<float> getDivergenceColor(int i, int j, int k, float threshold = 0.01f) const {
-        float div = divergenceAtCell(i, j, k);
-        float absDiv = std::abs(div);
-
-        std::vector<float> color = {0.0f, 0.0f, 0.0f, 0.0f};
-
-        if (absDiv > threshold) {
-            float intensity = std::min(absDiv * 10.0f, 1.0f);
-            if (div > 0) {
-                color = {0.0f, 0.0f, 1.0f, intensity}; // Blue for positive
-            } else {
-                color = {1.0f, 0.0f, 0.0f, intensity}; // Red for negative
-            }
-        }
-
-        return color;
     }
 
     void clearAllVelocities() {
@@ -378,7 +286,7 @@ public:
                 }
             }
         }
-        project();
+        project(dt);
     }
 
     float interpolate_density(float x, float y, float z) const {
@@ -406,33 +314,6 @@ public:
                s*(1-t)*u*dens_old[P_IX(i+1, j, k+1)] +
                (1-s)*t*u*dens_old[P_IX(i, j+1, k+1)] +
                s*t*u*dens_old[P_IX(i+1, j+1, k+1)];
-    }
-
-    float interpolate_pressure(float x, float y, float z) const {
-        x = std::max(0.5f, std::min((float)N + 0.5f, x));
-        y = std::max(0.5f, std::min((float)N + 0.5f, y));
-        z = std::max(0.5f, std::min((float)N + 0.5f, z));
-
-        int i = (int)floor(x - 0.5f);
-        int j = (int)floor(y - 0.5f);
-        int k = (int)floor(z - 0.5f);
-
-        float s = (x - 0.5f) - i;
-        float t = (y - 0.5f) - j;
-        float uu = (z - 0.5f) - k;
-
-        i = std::max(0, std::min(N+1, i));
-        j = std::max(0, std::min(N+1, j));
-        k = std::max(0, std::min(N+1, k));
-
-        return (1-s)*(1-t)*(1-uu)*p[P_IX(i, j, k)] +
-               s*(1-t)*(1-uu)*p[P_IX(i+1, j, k)] +
-               (1-s)*t*(1-uu)*p[P_IX(i, j+1, k)] +
-               s*t*(1-uu)*p[P_IX(i+1, j+1, k)] +
-               (1-s)*(1-t)*uu*p[P_IX(i, j, k+1)] +
-               s*(1-t)*uu*p[P_IX(i+1, j, k+1)] +
-               (1-s)*t*uu*p[P_IX(i, j+1, k+1)] +
-               s*t*uu*p[P_IX(i+1, j+1, k+1)];
     }
 
     float interpolate_u(float x, float y, float z) const {
@@ -717,20 +598,21 @@ private:
     }
 
     void advect_velocity(float dt) {
-        // Save current velocities to old arrays
+        // Save current velocities
         std::copy(u.begin(), u.end(), u_old.begin());
         std::copy(v.begin(), v.end(), v_old.begin());
         std::copy(w.begin(), w.end(), w_old.begin());
 
-        // Advect u (x-faces)
+        // Advect u velocities (x-component)
         for (int k = 1; k <= N; k++) {
             for (int j = 1; j <= N; j++) {
                 for (int i = 0; i <= N; i++) {
-                    float x = (float)i + 0.5f;
-                    float y = (float)j + 0.5f;
-                    float z = (float)k + 0.5f;
+                    // Position of this u-face
+                    float x = i + 0.5f;
+                    float y = j + 0.5f;
+                    float z = k + 0.5f;
 
-                    // Get velocity at this u-face from OLD arrays
+                    // Get velocity at this position (average of velocities)
                     float u_vel = u_old[U_IX(i, j, k)];
                     float v_vel = 0.25f * (
                         v_old[V_IX(i, j-1, k)] + v_old[V_IX(i, j, k)] +
@@ -741,25 +623,42 @@ private:
                         w_old[W_IX(i+1, j, k-1)] + w_old[W_IX(i+1, j, k)]
                     );
 
-                    // Backtrace
-                    float srcX = x - dt * u_vel* inv_h;
-                    float srcY = y - dt * v_vel* inv_h;
-                    float srcZ = z - dt * w_vel* inv_h;
+                    // Backtrace (RK2 method - Sebastian likely uses something similar)
+                    float half_dt = 0.5f * dt;
 
-                    // Interpolate from OLD u field
-                    u[U_IX(i, j, k)] = interpolate_u_old(srcX, srcY, srcZ);
+                    // First evaluation at current position
+                    float k1_u = u_vel;
+                    float k1_v = v_vel;
+                    float k1_w = w_vel;
+
+                    // Second evaluation at mid-point
+                    float mid_x = x - half_dt * k1_u * inv_h;
+                    float mid_y = y - half_dt * k1_v * inv_h;
+                    float mid_z = z - half_dt * k1_w * inv_h;
+
+                    // Get velocity at mid-point (interpolate from old fields)
+                    float mid_u = interpolate_u_old(mid_x, mid_y, mid_z);
+                    float mid_v = interpolate_v_old(mid_x, mid_y, mid_z);
+                    float mid_w = interpolate_w_old(mid_x, mid_y, mid_z);
+
+                    // Final backtraced position (RK2)
+                    float src_x = x - dt * mid_u * inv_h;
+                    float src_y = y - dt * mid_v * inv_h;
+                    float src_z = z - dt * mid_w * inv_h;
+
+                    // Interpolate u from old field at backtraced position
+                    u[U_IX(i, j, k)] = interpolate_u_old(src_x, src_y, src_z);
                 }
             }
         }
-        set_bnd_with_sphere(1, u, N+1, N+2, N+2);
 
-        // Advect v (y-faces)
+        // Advect v velocities (y-component)
         for (int k = 1; k <= N; k++) {
             for (int j = 0; j <= N; j++) {
                 for (int i = 1; i <= N; i++) {
-                    float x = (float)i + 0.5f;
-                    float y = (float)j + 0.5f;
-                    float z = (float)k + 0.5f;
+                    float x = i + 0.5f;
+                    float y = j + 0.5f;
+                    float z = k + 0.5f;
 
                     float u_vel = 0.25f * (
                         u_old[U_IX(i-1, j, k)] + u_old[U_IX(i, j, k)] +
@@ -771,23 +670,36 @@ private:
                         w_old[W_IX(i, j+1, k-1)] + w_old[W_IX(i, j+1, k)]
                     );
 
-                    float srcX = x - dt * u_vel* inv_h;
-                    float srcY = y - dt * v_vel* inv_h;
-                    float srcZ = z - dt * w_vel* inv_h;
+                    // RK2 backtrace
+                    float half_dt = 0.5f * dt;
+                    float k1_u = u_vel;
+                    float k1_v = v_vel;
+                    float k1_w = w_vel;
 
-                    v[V_IX(i, j, k)] = interpolate_v_old(srcX, srcY, srcZ);
+                    float mid_x = x - half_dt * k1_u * inv_h;
+                    float mid_y = y - half_dt * k1_v * inv_h;
+                    float mid_z = z - half_dt * k1_w * inv_h;
+
+                    float mid_u = interpolate_u_old(mid_x, mid_y, mid_z);
+                    float mid_v = interpolate_v_old(mid_x, mid_y, mid_z);
+                    float mid_w = interpolate_w_old(mid_x, mid_y, mid_z);
+
+                    float src_x = x - dt * mid_u * inv_h;
+                    float src_y = y - dt * mid_v * inv_h;
+                    float src_z = z - dt * mid_w * inv_h;
+
+                    v[V_IX(i, j, k)] = interpolate_v_old(src_x, src_y, src_z);
                 }
             }
         }
-        set_bnd_with_sphere(2, v, N+2, N+1, N+2);
 
-        // Advect w (z-faces)
+        // Advect w velocities (z-component)
         for (int k = 0; k <= N; k++) {
             for (int j = 1; j <= N; j++) {
                 for (int i = 1; i <= N; i++) {
-                    float x = (float)i + 0.5f;
-                    float y = (float)j + 0.5f;
-                    float z = (float)k + 0.5f;
+                    float x = i + 0.5f;
+                    float y = j + 0.5f;
+                    float z = k + 0.5f;
 
                     float u_vel = 0.25f * (
                         u_old[U_IX(i-1, j, k)] + u_old[U_IX(i, j, k)] +
@@ -799,14 +711,32 @@ private:
                     );
                     float w_vel = w_old[W_IX(i, j, k)];
 
-                    float srcX = x - dt * u_vel* inv_h;
-                    float srcY = y - dt * v_vel* inv_h;
-                    float srcZ = z - dt * w_vel* inv_h;
+                    // RK2 backtrace
+                    float half_dt = 0.5f * dt;
+                    float k1_u = u_vel;
+                    float k1_v = v_vel;
+                    float k1_w = w_vel;
 
-                    w[W_IX(i, j, k)] = interpolate_w_old(srcX, srcY, srcZ);
+                    float mid_x = x - half_dt * k1_u * inv_h;
+                    float mid_y = y - half_dt * k1_v * inv_h;
+                    float mid_z = z - half_dt * k1_w * inv_h;
+
+                    float mid_u = interpolate_u_old(mid_x, mid_y, mid_z);
+                    float mid_v = interpolate_v_old(mid_x, mid_y, mid_z);
+                    float mid_w = interpolate_w_old(mid_x, mid_y, mid_z);
+
+                    float src_x = x - dt * mid_u * inv_h;
+                    float src_y = y - dt * mid_v * inv_h;
+                    float src_z = z - dt * mid_w * inv_h;
+
+                    w[W_IX(i, j, k)] = interpolate_w_old(src_x, src_y, src_z);
                 }
             }
         }
+
+        // Apply boundary conditions
+        set_bnd_with_sphere(1, u, N+1, N+2, N+2);
+        set_bnd_with_sphere(2, v, N+2, N+1, N+2);
         set_bnd_with_sphere(3, w, N+2, N+2, N+1);
     }
 
@@ -990,121 +920,215 @@ private:
         return inv_h * ((u_right - u_left) + (v_top - v_bottom) + (w_front - w_back));
     }
 
-    void project() {
-
-        int size = N + 2;
-
-        // 1. Compute divergence of velocity field w3
+    void project(float dt) {
+        // 1. Calculate divergences and prepare pressure solver data
         std::vector<float> div((N+2)*(N+2)*(N+2), 0.0f);
-        float max_div_before = 0.0f;
 
+        // Structure similar to Sebastian's PressureSolveData
+        struct PressureData {
+            bool is_solid = false;
+            int flow_edge_count = 0;
+            float flow_left = 0.0f, flow_right = 0.0f;
+            float flow_bottom = 0.0f, flow_top = 0.0f;
+            float flow_back = 0.0f, flow_front = 0.0f;
+            float velocity_term = 0.0f;
+        };
+
+        std::vector<PressureData> pressure_data((N+2)*(N+2)*(N+2));
+
+        // Prepare pressure solver (similar to Sebastian's PreparePressureSolver)
         for (int k = 1; k <= N; k++) {
             for (int j = 1; j <= N; j++) {
                 for (int i = 1; i <= N; i++) {
-                    float d = computeDivergence(i, j, k);
-                    div[P_IX(i, j, k)] = d;
-                    if (fabs(d) > max_div_before) max_div_before = fabs(d);
+                    int idx = P_IX(i, j, k);
+
+                    // Skip if cell is solid
+                    // You need to implement IsSolid() function based on your sphere
+                    if (is_solid_cell(i, j, k)) {
+                        pressure_data[idx].is_solid = true;
+                        continue;
+                    }
+
+                    // Calculate divergence (Sebastian's CalculateVelocityDivergenceAtCell)
+                    float divergence = computeDivergence(i, j, k);
+                    div[idx] = divergence;
+
+                    // Check each neighbor for flow
+                    pressure_data[idx].flow_left = !is_solid_cell(i-1, j, k) ? 1.0f : 0.0f;
+                    pressure_data[idx].flow_right = !is_solid_cell(i+1, j, k) ? 1.0f : 0.0f;
+                    pressure_data[idx].flow_bottom = !is_solid_cell(i, j-1, k) ? 1.0f : 0.0f;
+                    pressure_data[idx].flow_top = !is_solid_cell(i, j+1, k) ? 1.0f : 0.0f;
+                    pressure_data[idx].flow_back = !is_solid_cell(i, j, k-1) ? 1.0f : 0.0f;
+                    pressure_data[idx].flow_front = !is_solid_cell(i, j, k+1) ? 1.0f : 0.0f;
+
+                    // Count flow edges
+                    pressure_data[idx].flow_edge_count =
+                        (int)pressure_data[idx].flow_left +
+                        (int)pressure_data[idx].flow_right +
+                        (int)pressure_data[idx].flow_bottom +
+                        (int)pressure_data[idx].flow_top +
+                        (int)pressure_data[idx].flow_back +
+                        (int)pressure_data[idx].flow_front;
+
+                    // Velocity term (Sebastian's velocityTerm)
+                    // In 3D: velocity_term = h * (u_right - u_left + v_top - v_bottom + w_front - w_back)
+                    float u_right = u[U_IX(i, j, k)];
+                    float u_left = u[U_IX(i-1, j, k)];
+                    float v_top = v[V_IX(i, j, k)];
+                    float v_bottom = v[V_IX(i, j-1, k)];
+                    float w_front = w[W_IX(i, j, k)];
+                    float w_back = w[W_IX(i, j, k-1)];
+
+                    pressure_data[idx].velocity_term = h * (u_right - u_left + v_top - v_bottom + w_front - w_back);
                 }
             }
         }
-        set_bnd_with_sphere(0, div, size, size, size);
 
+        // 2. Solve pressure using SOR (similar to Sebastian's PressureSolve)
+        int num_iterations = 100;
+        float sor_factor = 1.8f;  // Successive Over-Relaxation factor
 
-        // 2. Solve Poisson equation: ∇²p = ∇·u
-        // Actually, from paper: ∇²q = ∇·w3
-        // Where q is pressure-like scalar field
+        // Initialize pressure to zero
+        std::vector<float> pressure((N+2)*(N+2)*(N+2), 0.0f);
 
-        // Clear pressure field each timestep
-        std::fill(p.begin(), p.end(), 0.0f);
-
-        // SOR parameters
-        const int max_iterations = 20;  // Increased for better convergence
-        const float tolerance = 1e-4f;
-        const float omega = 1.85f;
-
-        // CORRECT SCALE: In Poisson equation ∇²p = ∇·u, there's no scale!
-        // The RHS is just divergence, not scaled divergence
-        // So scale = 1.0f, NOT rho*dx²/dt
-
-        for (int iter = 0; iter < max_iterations; iter++) {
-            float max_change = 0.0f;
-
-            // Red cells
+        for (int iter = 0; iter < num_iterations; iter++) {
             for (int k = 1; k <= N; k++) {
                 for (int j = 1; j <= N; j++) {
-                    int start_i = ((j + k) % 2 == 0) ? 1 : 2;
-                    for (int i = start_i; i <= N; i += 2) {
+                    for (int i = 1; i <= N; i++) {
                         int idx = P_IX(i, j, k);
+                        PressureData& data = pressure_data[idx];
 
-                        float sum_neighbors = p[P_IX(i-1, j, k)] + p[P_IX(i+1, j, k)] +
-                                             p[P_IX(i, j-1, k)] + p[P_IX(i, j+1, k)] +
-                                             p[P_IX(i, j, k-1)] + p[P_IX(i, j, k+1)];
+                        if (data.is_solid || data.flow_edge_count == 0) {
+                            pressure[idx] = 0.0f;
+                            continue;
+                        }
 
-                        // RHS is just divergence, no scaling!
-                        float rhs = div[idx];
+                        // Get neighbor pressures with flow coefficients
+                        float p_right = pressure[P_IX(i+1, j, k)] * data.flow_right;
+                        float p_left = pressure[P_IX(i-1, j, k)] * data.flow_left;
+                        float p_top = pressure[P_IX(i, j+1, k)] * data.flow_top;
+                        float p_bottom = pressure[P_IX(i, j-1, k)] * data.flow_bottom;
+                        float p_front = pressure[P_IX(i, j, k+1)] * data.flow_front;
+                        float p_back = pressure[P_IX(i, j, k-1)] * data.flow_back;
 
-                        // Gauss-Seidel with SOR: p_new = (sum_neighbors - rhs)/6
-                        // But for Poisson: sum_neighbors - 6*p = rhs
-                        // So: p = (sum_neighbors - rhs)/6
-                        float p_new = (1.0f - omega) * p[idx] +
-                                     omega * (sum_neighbors - rhs) / 6.0f;
+                        float pressure_sum = p_right + p_left + p_top + p_bottom + p_front + p_back;
 
-                        float change = fabs(p_new - p[idx]);
-                        if (change > max_change) max_change = change;
+                        // Sebastian's formula: new_p = (pressure_sum - density * h * velocity_term) / flow_edge_count
+                        float new_pressure = (pressure_sum - 1.0f * h * data.velocity_term) / data.flow_edge_count;
 
-                        p[idx] = p_new;
+                        // SOR update
+                        float old_pressure = pressure[idx];
+                        pressure[idx] = old_pressure + sor_factor * (new_pressure - old_pressure);
                     }
                 }
             }
-            set_bnd_with_sphere(0, p, size, size, size);
 
-            // Black cells
-            for (int k = 1; k <= N; k++) {
-                for (int j = 1; j <= N; j++) {
-                    int start_i = ((j + k) % 2 == 0) ? 2 : 1;
-                    for (int i = start_i; i <= N; i += 2) {
-                        int idx = P_IX(i, j, k);
-
-                        float sum_neighbors = p[P_IX(i-1, j, k)] + p[P_IX(i+1, j, k)] +
-                                             p[P_IX(i, j-1, k)] + p[P_IX(i, j+1, k)] +
-                                             p[P_IX(i, j, k-1)] + p[P_IX(i, j, k+1)];
-
-                        float rhs = div[P_IX(i, j, k)] * (h * h);
-                        float p_new = (1.0f - omega) * p[idx] +
-                            omega * (sum_neighbors - rhs) / 6.0f;
-
-                        float change = fabs(p_new - p[idx]);
-                        if (change > max_change) max_change = change;
-
-                        p[idx] = p_new;
-                    }
+            // Apply pressure boundary conditions (p = 0 at domain boundaries)
+            for (int j = 0; j <= N+1; j++) {
+                for (int i = 0; i <= N+1; i++) {
+                    pressure[P_IX(i, j, 0)] = 0.0f;
+                    pressure[P_IX(i, j, N+1)] = 0.0f;
                 }
             }
-            set_bnd_with_sphere(0, p, size, size, size);
-
-            if (max_change < tolerance) {
-                std::cout << "[PROJECT] Converged after " << iter+1 << " iterations" << std::endl;
-                break;
+            for (int k = 0; k <= N+1; k++) {
+                for (int i = 0; i <= N+1; i++) {
+                    pressure[P_IX(i, 0, k)] = 0.0f;
+                    pressure[P_IX(i, N+1, k)] = 0.0f;
+                }
             }
-    }
-
-    // 3. Apply pressure gradient: w4 = w3 - ∇p
-    applyPressureGradient();
-
-    // Check divergence after projection
-    float max_div_after = 0.0f;
-    for (int k = 1; k <= N; k++) {
-        for (int j = 1; j <= N; j++) {
-            for (int i = 1; i <= N; i++) {
-                float d = computeDivergence(i, j, k);
-                if (fabs(d) > max_div_after) max_div_after = fabs(d);
+            for (int k = 0; k <= N+1; k++) {
+                for (int j = 0; j <= N+1; j++) {
+                    pressure[P_IX(0, j, k)] = 0.0f;
+                    pressure[P_IX(N+1, j, k)] = 0.0f;
+                }
             }
         }
+
+        // 3. Update velocities from pressure gradient (Sebastian's UpdateVelocities)
+        // u_new = u - (dt/rho) * (∇p)
+        float scale = dt;  // Since density = 1 in Sebastian's code
+
+        // Update u velocities
+        for (int k = 1; k <= N; k++) {
+            for (int j = 1; j <= N; j++) {
+                for (int i = 0; i <= N; i++) {
+                    // Only update if not adjacent to solid on both sides
+                    bool left_solid = is_solid_cell(i, j, k);
+                    bool right_solid = is_solid_cell(i+1, j, k);
+
+                    if (!left_solid || !right_solid) {
+                        float p_right = pressure[P_IX(i+1, j, k)];
+                        float p_left = pressure[P_IX(i, j, k)];
+                        float pressure_grad = (p_right - p_left) / h;
+
+                        u[U_IX(i, j, k)] -= scale * pressure_grad;
+                    }
+                }
+            }
+        }
+
+        // Update v velocities
+        for (int k = 1; k <= N; k++) {
+            for (int j = 0; j <= N; j++) {
+                for (int i = 1; i <= N; i++) {
+                    bool bottom_solid = is_solid_cell(i, j, k);
+                    bool top_solid = is_solid_cell(i, j+1, k);
+
+                    if (!bottom_solid || !top_solid) {
+                        float p_top = pressure[P_IX(i, j+1, k)];
+                        float p_bottom = pressure[P_IX(i, j, k)];
+                        float pressure_grad = (p_top - p_bottom) / h;
+
+                        v[V_IX(i, j, k)] -= scale * pressure_grad;
+                    }
+                }
+            }
+        }
+
+        // Update w velocities
+        for (int k = 0; k <= N; k++) {
+            for (int j = 1; j <= N; j++) {
+                for (int i = 1; i <= N; i++) {
+                    bool back_solid = is_solid_cell(i, j, k);
+                    bool front_solid = is_solid_cell(i, j, k+1);
+
+                    if (!back_solid || !front_solid) {
+                        float p_front = pressure[P_IX(i, j, k+1)];
+                        float p_back = pressure[P_IX(i, j, k)];
+                        float pressure_grad = (p_front - p_back) / h;
+
+                        w[W_IX(i, j, k)] -= scale * pressure_grad;
+                    }
+                }
+            }
+        }
+
+        // Apply boundary conditions
+        set_bnd_with_sphere(1, u, N+1, N+2, N+2);
+        set_bnd_with_sphere(2, v, N+2, N+1, N+2);
+        set_bnd_with_sphere(3, w, N+2, N+2, N+1);
     }
 
-    std::cout << "[PROJECT] Max divergence after: " << max_div_after << std::endl;
-    std::cout << "[PROJECT] Divergence reduced by factor: "
-              << (max_div_before > 0 ? max_div_after / max_div_before : 0) << std::endl;
+    // Helper function for solid detection
+    bool is_solid_cell(int i, int j, int k) {
+        // For now, mark domain boundaries as solid
+        if (i <= 0 || i >= N+1 || j <= 0 || j >= N+1 || k <= 0 || k >= N+1) {
+            return true;
+        }
+
+        // Check if inside sphere (you need to implement your sphere check)
+        float x = (i - 0.5f) * h;
+        float y = (j - 0.5f) * h;
+        float z = (k - 0.5f) * h;
+
+        // Sphere at center with radius 0.2
+        float sphere_x = 0.5f, sphere_y = 0.5f, sphere_z = 0.5f;
+        float radius = 0.2f;
+        float dx = x - sphere_x;
+        float dy = y - sphere_y;
+        float dz = z - sphere_z;
+
+        return (dx*dx + dy*dy + dz*dz) <= (radius * radius);
     }
 
     void applyPressureGradient() {
@@ -1192,10 +1216,10 @@ private:
 
     void vel_step() {
         add_forces();
-        project();
-        //diffuse_velocity(dt);
+        diffuse_velocity(dt);
+        project(dt);
         advect_velocity(dt);
-        project();
+        project(dt);
     }
 
     void dens_step() {
