@@ -9,17 +9,22 @@
 #include "Grid3D.h"
 
 // --- Configuration ---
-struct Config {
-    static const int GRID_SIZE = 32;
-    static const int WINDOW_WIDTH = 1280;
-    static const int WINDOW_HEIGHT = 720;
-};
+
+int GRID_SIZE = 32;
+int WINDOW_WIDTH = 1280;
+int WINDOW_HEIGHT = 720;
+
+// Fixed color scaling values
+float MAX_PRESSURE = 1.0f;
+float MAX_VELOCITY = 2.0f;
+float DENSITY_ALPHA_SCALE = 0.8f;
+
 
 // --- Global State ---
 struct CameraState {
     float rotX = 30.0f;
     float rotY = -45.0f;
-    float distance = 10.0f;
+    float distance = 15.0f;
     ImVec2 lastMousePos;
     bool isDragging = false;
 };
@@ -29,17 +34,25 @@ struct SimulationState {
     float diff = 0.001f;
     float visc = 0.001f;
     bool isRunning = false;
-    bool showDivergence = false;
+
+    // Visualization modes
+    enum VisualizationMode {
+        DENSITY,        // Show density (blue gradient)
+        PRESSURE        // Show pressure field (red/transparent)
+    };
+
+    VisualizationMode visMode = DENSITY;
+
+    // Layer visualization
+    bool showSingleLayer = true;
+    int visibleLayer = 7; // Center layer by default
+    int layerAxis = 1; // 0=X, 1=Y, 2=Z
+
+    // Optional: show velocity vectors as overlay
     bool showVelocityVectors = false;
-    bool showInterpolationVectors = true;
-    float vectorScale = 3.0f;
-    int vectorSkip = 1; // Show every Nth vector
-    float minVelocityThreshold = 0.01f;
-    float interpolationOffset = 0.0f; // Offset for interpolation test points
-    int interpolationSubdivisions = 3; // Number of interpolation points between grid cells
-    bool showSingleLayer = true;       // Toggle single layer view
-    int visibleLayer = 7;               // Which layer to show (0 to N-1)
-    int layerAxis = 1 ;                  // 0=X, 1=Y, 2=Z (which axis to slice along)
+    float vectorScale = 2.0f;
+    int vectorSkip = 2;
+    float minVelocityThreshold = 0.02f;
 };
 
 // --- Forward Declarations ---
@@ -231,258 +244,150 @@ void Graphics::setupCamera(const CameraState& camera) {
     glTranslatef(0.0f, 0.0f, -camera.distance);
     glRotatef(camera.rotX, 1.0f, 0.0f, 0.0f);
     glRotatef(camera.rotY, 0.0f, 1.0f, 0.0f);
-    glTranslatef(-(float)Config::GRID_SIZE/2.0f, -(float)Config::GRID_SIZE/2.0f, -(float)Config::GRID_SIZE/2.0f);
+    glTranslatef(-(float)GRID_SIZE/2.0f, -(float)GRID_SIZE/2.0f, -(float)GRID_SIZE/2.0f);
 }
 
 void Graphics::renderScene(Grid3D& grid, const SimulationState& state) {
-        // Draw Grid Boundary
-        drawWireframeBox((float)Config::GRID_SIZE);
+    // Draw Grid Boundary
+    drawWireframeBox((float)GRID_SIZE);
 
-        // Draw Voxels
-        if (state.showSingleLayer) {
-            // Draw only one layer
-            int layer = state.visibleLayer + 1; // +1 because our loops start from 1
-            switch (state.layerAxis) {
-                case 0: // X-axis slice
-                    for(int k = 1; k <= grid.N; k++) {
-                        for(int j = 1; j <= grid.N; j++) {
-                            int i = layer;
-                            drawCell(grid, state, i, j, k);
-                        }
-                    }
-                    break;
-                case 1: // Y-axis slice
-                    for(int k = 1; k <= grid.N; k++) {
-                        for(int i = 1; i <= grid.N; i++) {
-                            int j = layer;
-                            drawCell(grid, state, i, j, k);
-                        }
-                    }
-                    break;
-                case 2: // Z-axis slice (default)
+    // Draw Voxels
+    if (state.showSingleLayer) {
+        // Draw only one layer
+        int layer = state.visibleLayer + 1; // +1 because our loops start from 1
+        switch (state.layerAxis) {
+            case 0: // X-axis slice
+                for(int k = 1; k <= grid.N; k++) {
                     for(int j = 1; j <= grid.N; j++) {
-                        for(int i = 1; i <= grid.N; i++) {
-                            int k = layer;
-                            drawCell(grid, state, i, j, k);
-                        }
-                    }
-                    break;
-            }
-        } else {
-            // Draw all cells (original code)
-            for(int k = 1; k <= grid.N; k++) {
-                for(int j = 1; j <= grid.N; j++) {
-                    for(int i = 1; i <= grid.N; i++) {
+                        int i = layer;
                         drawCell(grid, state, i, j, k);
                     }
                 }
-            }
-        }
-
-        // Draw velocity vectors (with layer filtering)
-        drawVelocityVectors(grid, state);
-    }
-
-// Helper function to draw a single cell
-void Graphics::drawCell(Grid3D& grid, const SimulationState& state, int i, int j, int k) {
-    if (state.showDivergence) {
-        std::vector<float> color = grid.getDivergenceColor(i, j, k, 0.01f);
-        if (color[3] > 0.01f) {
-            drawCube((float)i + 0.5f, (float)j + 0.5f, (float)k + 0.5f,
-                    0.85f, color[0], color[1], color[2], color[3]);
+                break;
+            case 1: // Y-axis slice
+                for(int k = 1; k <= grid.N; k++) {
+                    for(int i = 1; i <= grid.N; i++) {
+                        int j = layer;
+                        drawCell(grid, state, i, j, k);
+                    }
+                }
+                break;
+            case 2: // Z-axis slice
+                for(int j = 1; j <= grid.N; j++) {
+                    for(int i = 1; i <= grid.N; i++) {
+                        int k = layer;
+                        drawCell(grid, state, i, j, k);
+                    }
+                }
+                break;
         }
     } else {
-        float d = grid.dens[grid.P_IX(i, j, k)];
-        if (d > 0.05f) {
-            float alpha = std::min(d/100.0f, 0.8f);
-            float blue = 1.0f;
-            float green = std::min(d/100.0f, 1.0f);
-            float red = std::min(d/200.0f, 1.0f);
-            drawCube((float)i + 0.5f, (float)j + 0.5f, (float)k + 0.5f,
-                    0.85f, red, green, blue, alpha);
+        // Draw all cells
+        for(int k = 1; k <= grid.N; k++) {
+            for(int j = 1; j <= grid.N; j++) {
+                for(int i = 1; i <= grid.N; i++) {
+                    drawCell(grid, state, i, j, k);
+                }
+            }
         }
+    }
+
+    // Draw velocity vectors if enabled
+    if (state.showVelocityVectors) {
+        drawVelocityVectors(grid, state);
     }
 }
 
+// Helper function to draw a single cell
+void Graphics::drawCell(Grid3D& grid, const SimulationState& state, int i, int j, int k) {
+    std::vector<float> color;
+    float alpha = 0.0f;
+
+    switch (state.visMode) {
+        case SimulationState::DENSITY: {
+            float d = grid.dens[grid.P_IX(i, j, k)];
+            if (d > 0.05f) {
+                // Blue gradient: dark blue (low) -> cyan (medium) -> white (high)
+                alpha = std::min(d/100.0f, DENSITY_ALPHA_SCALE);
+                float normalized = std::min(d/200.0f, 1.0f);
+
+                if (normalized < 0.5f) {
+                    // Dark blue to cyan
+                    float t = normalized * 2.0f;
+                    color = {0.0f, t, 1.0f, alpha};
+                } else {
+                    // Cyan to white
+                    float t = (normalized - 0.5f) * 2.0f;
+                    color = {t, 1.0f, 1.0f, alpha};
+                }
+            } else {
+                return; // Don't draw cells with very low density
+            }
+            break;
+        }
+
+        case SimulationState::PRESSURE: {
+            float p_val = grid.p[grid.P_IX(i, j, k)];
+            float abs_p = std::abs(p_val);
+
+            if (abs_p > 0.001f) {
+
+                float normalized = std::min(abs_p / MAX_PRESSURE, 1.0f);
+
+
+                alpha = 0.3f + 0.7f * normalized;
+
+
+                float intensity = 0.5f + 0.5f * normalized;
+                color = {1.0f, 0.0f, 0.0f, alpha};
+
+            } else {
+                return;
+            }
+            break;
+        }
+    }
+
+    drawCube((float)i + 0.5f, (float)j + 0.5f, (float)k + 0.5f,
+             0.85f, color[0], color[1], color[2], color[3]);
+}
+
 void Graphics::drawVelocityVectors(Grid3D& grid, const SimulationState& state) {
-    if (!state.showVelocityVectors && !state.showInterpolationVectors) return;
+    if (!state.showVelocityVectors) return;
 
-    // Draw grid velocity vectors (cyan/yellow)
-    if (state.showVelocityVectors) {
-        for(int k = 1; k <= grid.N; k += state.vectorSkip) {
-            for(int j = 1; j <= grid.N; j += state.vectorSkip) {
-                for(int i = 1; i <= grid.N; i += state.vectorSkip) {
-                    // Layer filtering
-                    if (state.showSingleLayer) {
-                        int layer = state.visibleLayer + 1;
-                        switch (state.layerAxis) {
-                            case 0: if (i != layer) continue; break;
-                            case 1: if (j != layer) continue; break;
-                            case 2: if (k != layer) continue; break;
-                        }
-                    }
-
-                    std::vector<float> vel = grid.getVelocityAtCellCenter(i, j, k);
-                    float vx = vel[0];
-                    float vy = vel[1];
-                    float vz = vel[2];
-                    float mag = std::sqrt(vx*vx + vy*vy + vz*vz);
-
-                    if (mag > state.minVelocityThreshold) {
-                        float centerX = (float)i + 0.5f;
-                        float centerY = (float)j + 0.5f;
-                        float centerZ = (float)k + 0.5f;
-                        float scale = state.vectorScale;
-                        float endX = centerX + vx * scale;
-                        float endY = centerY + vy * scale;
-                        float endZ = centerZ + vz * scale;
-
-                        float normalized = std::min(mag / 2.0f, 1.0f);
-                        float r = normalized;
-                        float g = 1.0f;
-                        float b = 1.0f - normalized;
-
-                        drawArrow(centerX, centerY, centerZ, endX, endY, endZ, r, g, b);
+    for(int k = 1; k <= grid.N; k += state.vectorSkip) {
+        for(int j = 1; j <= grid.N; j += state.vectorSkip) {
+            for(int i = 1; i <= grid.N; i += state.vectorSkip) {
+                if (state.showSingleLayer) {
+                    int layer = state.visibleLayer + 1;
+                    switch (state.layerAxis) {
+                        case 0: if (i != layer) continue; break;
+                        case 1: if (j != layer) continue; break;
+                        case 2: if (k != layer) continue; break;
                     }
                 }
-            }
-        }
-    }
 
-    // Draw SINGLE interpolated vectors at specified offset (magenta arrows)
-    if (state.showInterpolationVectors) {
-        for(int k = 1; k <= grid.N; k += state.vectorSkip) {
-            for(int j = 1; j <= grid.N; j += state.vectorSkip) {
-                for(int i = 1; i <= grid.N; i += state.vectorSkip) {
-                    // Layer filtering
-                    if (state.showSingleLayer) {
-                        int layer = state.visibleLayer + 1;
-                        switch (state.layerAxis) {
-                            case 0: if (i != layer) continue; break;
-                            case 1: if (j != layer) continue; break;
-                            case 2: if (k != layer) continue; break;
-                        }
-                    }
+                std::vector<float> vel = grid.getVelocityAtCellCenter(i, j, k);
+                float vx = vel[0];
+                float vy = vel[1];
+                float vz = vel[2];
+                float mag = std::sqrt(vx*vx + vy*vy + vz*vz);
 
-                    // Test interpolation at offset position within the cell
-                    float testX = (float)i + state.interpolationOffset;
-                    float testY = (float)j + state.interpolationOffset;
-                    float testZ = (float)k + state.interpolationOffset;
+                if (mag > state.minVelocityThreshold) {
+                    float centerX = (float)i + 0.5f;
+                    float centerY = (float)j + 0.5f;
+                    float centerZ = (float)k + 0.5f;
+                    float scale = state.vectorScale;
+                    float endX = centerX + vx * scale;
+                    float endY = centerY + vy * scale;
+                    float endZ = centerZ + vz * scale;
 
-                    // Additional layer filtering for interpolation point
-                    if (state.showSingleLayer) {
-                        int layer = state.visibleLayer + 1;
-                        float testCoord;
-                        switch (state.layerAxis) {
-                            case 0: testCoord = testX; break;
-                            case 1: testCoord = testY; break;
-                            case 2: testCoord = testZ; break;
-                        }
-                        if (std::abs(testCoord - (layer + 0.5f)) > 0.01f) continue;
-                    }
+                    float normalized = std::min(mag / MAX_VELOCITY, 1.0f);
+                    float r = normalized;
+                    float g = 0.7f;
+                    float b = 1.0f - normalized;
 
-                    // Get velocity at cell center for comparison
-                    std::vector<float> vel = grid.getVelocityAtCellCenter(i, j, k);
-                    float centerMag = std::sqrt(vel[0]*vel[0] + vel[1]*vel[1] + vel[2]*vel[2]);
-
-                    // Only show interpolation where there's significant velocity
-                    if (centerMag > state.minVelocityThreshold * 0.5f) {
-                        // Use the interpolation functions
-                        float interpU = grid.interpolate_u(testX, testY, testZ);
-                        float interpV = grid.interpolate_v(testX, testY, testZ);
-                        float interpW = grid.interpolate_w(testX, testY, testZ);
-
-                        float interpMag = std::sqrt(interpU*interpU + interpV*interpV + interpW*interpW);
-
-                        if (interpMag > state.minVelocityThreshold * 0.5f) {
-                            // Scale for visualization
-                            float scale = state.vectorScale * 0.7f; // Slightly smaller than grid vectors
-                            float endX = testX + interpU * scale;
-                            float endY = testY + interpV * scale;
-                            float endZ = testZ + interpW * scale;
-
-                            // Color: magenta/purple to show it's interpolated
-                            float normalized = std::min(interpMag / 2.0f, 1.0f);
-                            float r = 1.0f;
-                            float g = 0.3f;
-                            float b = 1.0f - normalized * 0.5f;
-
-                            drawArrow(testX, testY, testZ, endX, endY, endZ, r, g, b);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Draw SUBDIVIDED interpolated vectors (light magenta arrows)
-    if (state.showInterpolationVectors && state.interpolationSubdivisions > 0) {
-        float step = 1.0f / (state.interpolationSubdivisions + 1);
-
-        for(int k = 1; k < grid.N; k += state.vectorSkip) {
-            for(int j = 1; j < grid.N; j += state.vectorSkip) {
-                for(int i = 1; i < grid.N; i += state.vectorSkip) {
-                    // Layer filtering for base grid points
-                    if (state.showSingleLayer) {
-                        int layer = state.visibleLayer + 1;
-                        switch (state.layerAxis) {
-                            case 0: if (i != layer) continue; break;
-                            case 1: if (j != layer) continue; break;
-                            case 2: if (k != layer) continue; break;
-                        }
-                    }
-
-                    for(int subZ = 0; subZ <= state.interpolationSubdivisions; subZ++) {
-                        for(int subY = 0; subY <= state.interpolationSubdivisions; subY++) {
-                            for(int subX = 0; subX <= state.interpolationSubdivisions; subX++) {
-                                float subStepX = step * subX;
-                                float subStepY = step * subY;
-                                float subStepZ = step * subZ;
-
-                                // Skip if exactly at grid points (already shown as single interpolation)
-                                if ((subX == 0 || subX == state.interpolationSubdivisions) &&
-                                    (subY == 0 || subY == state.interpolationSubdivisions) &&
-                                    (subZ == 0 || subZ == state.interpolationSubdivisions)) {
-                                    continue;
-                                }
-
-                                float testX = (float)i + subStepX;
-                                float testY = (float)j + subStepY;
-                                float testZ = (float)k + subStepZ;
-
-                                // Additional layer filtering for interpolation points
-                                if (state.showSingleLayer) {
-                                    int layer = state.visibleLayer + 1;
-                                    float testCoord;
-                                    switch (state.layerAxis) {
-                                        case 0: testCoord = testX; break;
-                                        case 1: testCoord = testY; break;
-                                        case 2: testCoord = testZ; break;
-                                    }
-                                    if (std::abs(testCoord - (layer + 0.5f)) > 0.01f) continue;
-                                }
-
-                                float interpU = grid.interpolate_u(testX, testY, testZ);
-                                float interpV = grid.interpolate_v(testX, testY, testZ);
-                                float interpW = grid.interpolate_w(testX, testY, testZ);
-                                float interpMag = std::sqrt(interpU*interpU + interpV*interpV + interpW*interpW);
-
-                                if (interpMag > state.minVelocityThreshold * 0.3f) {
-                                    float scale = state.vectorScale * 0.5f;
-                                    float endX = testX + interpU * scale;
-                                    float endY = testY + interpV * scale;
-                                    float endZ = testZ + interpW * scale;
-
-                                    float normalized = std::min(interpMag / 2.0f, 1.0f);
-                                    float r = 0.8f;
-                                    float g = 0.6f;
-                                    float b = 1.0f - normalized * 0.3f;
-
-                                    drawArrow(testX, testY, testZ, endX, endY, endZ, r, g, b);
-                                }
-                            }
-                        }
-                    }
+                    drawArrow(centerX, centerY, centerZ, endX, endY, endZ, r, g, b);
                 }
             }
         }
@@ -508,7 +413,8 @@ void Input::handleCameraInput(CameraState& camera) {
         }
 
         camera.distance -= ImGui::GetIO().MouseWheel * 5.0f;
-        if (camera.distance < 10.0f) camera.distance = 10.0f;
+        if (camera.distance < 5.0f) camera.distance = 5.0f;
+        if (camera.distance > 100.0f) camera.distance = 100.0f;
     }
 }
 
@@ -542,90 +448,215 @@ void UI::renderImGui(Grid3D& grid, SimulationState& state, CameraState& camera) 
     ImGui::NewFrame();
 
     ImGui::Begin("3D Fluid Controls");
+
+    // FPS and stats
     ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+    ImGui::Text("Grid: %d^3 cells", grid.N);
 
     // Simulation controls
     ImGui::Separator();
-    ImGui::Text("Simulation:");
+    ImGui::Text("Simulation Control:");
     ImGui::Checkbox("Running", &state.isRunning);
-    ImGui::Checkbox("Show Divergence", &state.showDivergence);
+    ImGui::SameLine();
+    if (ImGui::Button("Single Step")) {
+        grid.step();
+    }
 
-    // Velocity visualization
+    // Timestep parameters
     ImGui::Separator();
-    ImGui::Text("Velocity Visualization:");
-    ImGui::Checkbox("Show Grid Velocities", &state.showVelocityVectors);
-    ImGui::Checkbox("Show Interpolated Velocities", &state.showInterpolationVectors);
+    ImGui::Text("Simulation Parameters:");
+    ImGui::SliderFloat("Time Step (dt)", &state.dt, 0.001f, 0.1f, "%.4f");
+    ImGui::SliderFloat("Viscosity", &state.visc, 0.0f, 0.1f, "%.4f");
+    ImGui::SliderFloat("Density Diffusion", &state.diff, 0.0f, 0.1f, "%.4f");
 
-    // Velocity controls
+    // Visualization mode selection
     ImGui::Separator();
-    ImGui::Text("Velocity Initialization (Staggered Grid):");
+    ImGui::Text("Visualization:");
 
-    if (ImGui::Button("Clear All Velocities")) {
-        grid.clearAllVelocities();
+    if (ImGui::RadioButton("Density Field", state.visMode == SimulationState::DENSITY)) {
+        state.visMode = SimulationState::DENSITY;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Pressure Field", state.visMode == SimulationState::PRESSURE)) {
+        state.visMode = SimulationState::PRESSURE;
     }
 
-    if (ImGui::Button("Random Staggered")) {
-        grid.initRandomStaggeredVelocities(0.5f);
-    }
-
-    // Density controls
+    // Show color scheme info
     ImGui::Separator();
-    ImGui::Text("Density Controls:");
-
-    if (ImGui::Button("Add Random Density")) {
-        int x = rand() % grid.N + 1;
-        int y = rand() % grid.N + 1;
-        int z = rand() % grid.N + 1;
-        grid.add_density(x, y, z, 100.0f);
+    ImGui::Text("Color Scheme:");
+    if (state.visMode == SimulationState::DENSITY) {
+        ImGui::TextColored(ImVec4(0, 0, 1, 1), "Blue: Low density");
+        ImGui::TextColored(ImVec4(0, 1, 1, 1), "Cyan: Medium density");
+        ImGui::TextColored(ImVec4(1, 1, 1, 1), "White: High density");
+    } else {
+        ImGui::TextColored(ImVec4(1, 0, 0, 0.3f), "Transparent Red: Low pressure");
+        ImGui::TextColored(ImVec4(1, 0, 0, 1.0f), "Opaque Red: High pressure");
     }
 
-    if (ImGui::Button("Add Random Velocity")) {
-        int x = rand() % grid.N + 1;
-        int y = rand() % grid.N + 1;
-        int z = rand() % grid.N + 1;
-        grid.add_velocity(x, y, z,
-            (rand() / (float)RAND_MAX) * 2.0f - 1.0f,
-            (rand() / (float)RAND_MAX) * 2.0f - 1.0f,
-            (rand() / (float)RAND_MAX) * 2.0f - 1.0f);
-    }
+    // Vector visualization (optional overlay)
+    ImGui::Separator();
+    ImGui::Text("Overlay:");
+    ImGui::Checkbox("Show Velocity Vectors", &state.showVelocityVectors);
 
-    if (ImGui::Button("Reset Everything")) {
-        grid = Grid3D(Config::GRID_SIZE, state.diff, state.visc, state.dt);
+    if (state.showVelocityVectors) {
+        ImGui::SliderFloat("Vector Scale", &state.vectorScale, 0.1f, 10.0f);
+        ImGui::SliderInt("Vector Skip", &state.vectorSkip, 1, 5);
+        ImGui::SliderFloat("Min Velocity", &state.minVelocityThreshold, 0.0f, 1.0f);
     }
 
     // Layer visualization controls
     ImGui::Separator();
-    ImGui::Text("Layer Visualization:");
+    ImGui::Text("Slice View:");
     ImGui::Checkbox("Show Single Layer", &state.showSingleLayer);
+
     if (state.showSingleLayer) {
-        ImGui::SliderInt("Visible Layer", &state.visibleLayer, 0, grid.N-1);
-        ImGui::Text("Axis:");
-        ImGui::RadioButton("X Axis", &state.layerAxis, 0);
+        ImGui::SliderInt("Layer", &state.visibleLayer, 0, grid.N-1);
+
+        ImGui::Text("Slice Axis:");
+        ImGui::RadioButton("X", &state.layerAxis, 0);
         ImGui::SameLine();
-        ImGui::RadioButton("Y Axis", &state.layerAxis, 1);
+        ImGui::RadioButton("Y", &state.layerAxis, 1);
         ImGui::SameLine();
-        ImGui::RadioButton("Z Axis", &state.layerAxis, 2);
+        ImGui::RadioButton("Z", &state.layerAxis, 2);
     }
 
+    // Velocity initialization controls
+    ImGui::Separator();
+    ImGui::Text("Initialization:");
+
+    if (ImGui::Button("Clear All")) {
+        grid.clearAllVelocities();
+        std::fill(grid.dens.begin(), grid.dens.end(), 0.0f);
+        std::fill(grid.p.begin(), grid.p.end(), 0.0f);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Random Velocities")) {
+        grid.initRandomStaggeredVelocities(1.0f);
+    }
+
+    // Add some preset scenarios
+    ImGui::Separator();
+    ImGui::Text("Presets:");
+
+    if (ImGui::Button("Smoke Plume")) {
+        // Clear everything first
+        grid.clearAllVelocities();
+        std::fill(grid.dens.begin(), grid.dens.end(), 0.0f);
+
+        // Add density at bottom center
+        int centerX = grid.N / 2;
+        int centerY = 2;
+        int centerZ = grid.N / 2;
+
+        for (int k = centerZ-1; k <= centerZ+1; k++) {
+            for (int i = centerX-1; i <= centerX+1; i++) {
+                grid.add_density(i, centerY, k, 150.0f);
+            }
+        }
+
+        // Add upward velocity
+        for (int k = centerZ-1; k <= centerZ+1; k++) {
+            for (int i = centerX-1; i <= centerX+1; i++) {
+                grid.add_velocity(i, centerY, k, 0.0f, 1.5f, 0.0f);
+            }
+        }
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Vortex")) {
+        grid.clearAllVelocities();
+        std::fill(grid.dens.begin(), grid.dens.end(), 0.0f);
+
+        // Add a vortex in the center
+        for (int k = grid.N/2-2; k <= grid.N/2+2; k++) {
+            for (int j = grid.N/2-2; j <= grid.N/2+2; j++) {
+                for (int i = grid.N/2-2; i <= grid.N/2+2; i++) {
+                    float dx = (float)i - grid.N/2.0f;
+                    float dy = (float)j - grid.N/2.0f;
+                    float dz = (float)k - grid.N/2.0f;
+                    float r = sqrt(dx*dx + dy*dy + dz*dz);
+
+                    if (r > 0.1f && r < 3.0f) {
+                        float strength = 3.0f / (r + 0.1f);
+                        float vx = -dy * strength;
+                        float vy = dx * 0.5f * strength;
+                        float vz = 0.0f;
+
+                        grid.add_velocity(i, j, k, vx, vy, vz);
+                    }
+                }
+            }
+        }
+    }
 
     // Camera controls
     ImGui::Separator();
     ImGui::Text("Camera:");
     ImGui::SliderFloat("Rotation X", &camera.rotX, -180.0f, 180.0f);
     ImGui::SliderFloat("Rotation Y", &camera.rotY, -180.0f, 180.0f);
-    ImGui::SliderFloat("Distance", &camera.distance, 1.0f, 200.0f);
+    ImGui::SliderFloat("Distance", &camera.distance, 5.0f, 100.0f);
 
-    // Divergence status
-    ImGui::Separator();
-    ImGui::Text("Status:");
-    if (grid.checkDivergence(1e-2f)) {
-        ImGui::TextColored(ImVec4(0, 1, 0, 1), "✓ Divergence: OK (incompressible)");
-    } else {
-        ImGui::TextColored(ImVec4(1, 0, 0, 1), "✗ Divergence: BAD (not incompressible)");
+    if (ImGui::Button("Reset Camera")) {
+        camera.rotX = 30.0f;
+        camera.rotY = -45.0f;
+        camera.distance = 15.0f;
     }
 
-    ImGui::Text("Grid Size: %d x %d x %d", grid.N, grid.N, grid.N);
-    ImGui::Text("Using: Staggered MAC Grid");
+    // Statistics
+    ImGui::Separator();
+    ImGui::Text("Statistics:");
+
+    // Compute some statistics
+    float maxVel = 0.0f;
+    float maxDens = 0.0f;
+    float maxPress = 0.0f;
+
+    for (int i = 0; i < grid.u.size(); i++) {
+        if (fabs(grid.u[i]) > maxVel) maxVel = fabs(grid.u[i]);
+    }
+    for (int i = 0; i < grid.v.size(); i++) {
+        if (fabs(grid.v[i]) > maxVel) maxVel = fabs(grid.v[i]);
+    }
+    for (int i = 0; i < grid.w.size(); i++) {
+        if (fabs(grid.w[i]) > maxVel) maxVel = fabs(grid.w[i]);
+    }
+
+    for (int i = 0; i < grid.dens.size(); i++) {
+        if (grid.dens[i] > maxDens) maxDens = grid.dens[i];
+    }
+
+    for (int i = 0; i < grid.p.size(); i++) {
+        if (fabs(grid.p[i]) > maxPress) maxPress = fabs(grid.p[i]);
+    }
+
+    ImGui::Text("Max Velocity: %.4f", maxVel);
+    ImGui::Text("Max Density: %.2f", maxDens);
+    ImGui::Text("Max Pressure: %.4f", maxPress);
+
+    // Divergence check
+    ImGui::Separator();
+    ImGui::Text("Flow Status:");
+
+    if (grid.checkDivergence(1e-2f)) {
+        ImGui::TextColored(ImVec4(0, 1, 0, 1), "✓ Incompressible");
+    } else {
+        ImGui::TextColored(ImVec4(1, 0, 0, 1), "✗ Divergent");
+    }
+
+    // Reset button
+    ImGui::Separator();
+    if (ImGui::Button("Reset Everything")) {
+        grid = Grid3D(GRID_SIZE, state.diff, state.visc, state.dt);
+        state.isRunning = false;
+        state.visMode = SimulationState::DENSITY;
+    }
+
+    // Help text
+    ImGui::Separator();
+    ImGui::Text("Controls:");
+    ImGui::BulletText("Right-click + drag: Rotate camera");
+    ImGui::BulletText("Mouse wheel: Zoom");
+    ImGui::BulletText("Space: Toggle simulation (not implemented)");
 
     ImGui::End();
 
@@ -646,9 +677,9 @@ GLFWwindow* App::initializeWindow() {
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 
     GLFWwindow* window = glfwCreateWindow(
-        Config::WINDOW_WIDTH,
-        Config::WINDOW_HEIGHT,
-        "3D Fluid Simulation (Staggered MAC Grid)",
+        WINDOW_WIDTH,
+        WINDOW_HEIGHT,
+        "3D Fluid Simulation - Density & Pressure",
         NULL, NULL
     );
 
@@ -679,6 +710,15 @@ void App::initializeGraphics() {
     glEnable(GL_LIGHTING);
     glEnable(GL_COLOR_MATERIAL);
     glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
+
+    // Set up a simple light
+    float lightPos[] = {10.0f, 10.0f, 10.0f, 1.0f};
+    glLightfv(GL_LIGHT0, GL_POSITION, lightPos);
+
+    float lightAmbient[] = {0.2f, 0.2f, 0.2f, 1.0f};
+    float lightDiffuse[] = {0.8f, 0.8f, 0.8f, 1.0f};
+    glLightfv(GL_LIGHT0, GL_AMBIENT, lightAmbient);
+    glLightfv(GL_LIGHT0, GL_DIFFUSE, lightDiffuse);
 }
 
 void App::mainLoop(GLFWwindow* window, Grid3D& grid, CameraState& camera, SimulationState& state) {
@@ -703,7 +743,7 @@ void App::mainLoop(GLFWwindow* window, Grid3D& grid, CameraState& camera, Simula
         glViewport(0, 0, display_w, display_h);
 
         // Clear screen
-        glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         // Setup view
@@ -744,29 +784,17 @@ int main() {
     // Setup graphics
     App::initializeGraphics();
 
-    // Create simulation grid with staggered MAC grid
-    Grid3D grid(Config::GRID_SIZE, 0.0001f, 0.0001f, 0.1f);
+    // Create simulation grid
+    Grid3D grid(GRID_SIZE, 0.001f, 0.001f, 0.1f);
 
     // Initialize state
     CameraState camera;
     SimulationState state;
-
-    std::cout << "Starting 3D Fluid Simulation with Staggered MAC Grid..." << std::endl;
-    std::cout << "Grid configuration:" << std::endl;
-    std::cout << "  - Pressure cells: " << Config::GRID_SIZE << "^3" << std::endl;
-    std::cout << "  - u faces: " << (Config::GRID_SIZE+1) << " x " << (Config::GRID_SIZE+2) << " x " << (Config::GRID_SIZE+2) << std::endl;
-    std::cout << "  - v faces: " << (Config::GRID_SIZE+2) << " x " << (Config::GRID_SIZE+1) << " x " << (Config::GRID_SIZE+2) << std::endl;
-    std::cout << "  - w faces: " << (Config::GRID_SIZE+2) << " x " << (Config::GRID_SIZE+2) << " x " << (Config::GRID_SIZE+1) << std::endl;
-    std::cout << "\nControls:" << std::endl;
-    std::cout << "  - Right-click and drag to rotate camera" << std::endl;
-    std::cout << "  - Mouse wheel to zoom" << std::endl;
 
     // Run main loop
     App::mainLoop(window, grid, camera, state);
 
     // Cleanup
     App::shutdown(window);
-
-    std::cout << "Clean shutdown" << std::endl;
     return 0;
 }

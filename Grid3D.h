@@ -267,6 +267,33 @@ public:
                s*t*u*dens_old[P_IX(i+1, j+1, k+1)];
     }
 
+    float interpolate_pressure(float x, float y, float z) const {
+        x = std::max(0.5f, std::min((float)N + 0.5f, x));
+        y = std::max(0.5f, std::min((float)N + 0.5f, y));
+        z = std::max(0.5f, std::min((float)N + 0.5f, z));
+
+        int i = (int)floor(x - 0.5f);
+        int j = (int)floor(y - 0.5f);
+        int k = (int)floor(z - 0.5f);
+
+        float s = (x - 0.5f) - i;
+        float t = (y - 0.5f) - j;
+        float uu = (z - 0.5f) - k;
+
+        i = std::max(0, std::min(N+1, i));
+        j = std::max(0, std::min(N+1, j));
+        k = std::max(0, std::min(N+1, k));
+
+        return (1-s)*(1-t)*(1-uu)*p[P_IX(i, j, k)] +
+               s*(1-t)*(1-uu)*p[P_IX(i+1, j, k)] +
+               (1-s)*t*(1-uu)*p[P_IX(i, j+1, k)] +
+               s*t*(1-uu)*p[P_IX(i+1, j+1, k)] +
+               (1-s)*(1-t)*uu*p[P_IX(i, j, k+1)] +
+               s*(1-t)*uu*p[P_IX(i+1, j, k+1)] +
+               (1-s)*t*uu*p[P_IX(i, j+1, k+1)] +
+               s*t*uu*p[P_IX(i+1, j+1, k+1)];
+    }
+
     float interpolate_u(float x, float y, float z) const {
         x = std::max(0.5f, std::min((float)N + 0.5f, x));
         y = std::max(0.5f, std::min((float)N + 1.5f, y));
@@ -433,6 +460,28 @@ public:
                s*(1-t)*uu*w_old[W_IX(i+1, j, k+1)] +
                (1-s)*t*uu*w_old[W_IX(i, j+1, k+1)] +
                s*t*uu*w_old[W_IX(i+1, j+1, k+1)];
+    }
+
+    void debugVelocityDamping() {
+        static int frame = 0;
+        frame++;
+
+        // Track center cell velocities
+        int i = N/2, j = N/2, k = N/2;
+        float u_val = 0.5f * (u[U_IX(i-1, j, k)] + u[U_IX(i, j, k)]);
+        float v_val = 0.5f * (v[V_IX(i, j-1, k)] + v[V_IX(i, j, k)]);
+        float w_val = 0.5f * (w[W_IX(i, j, k-1)] + w[W_IX(i, j, k)]);
+        float mag = std::sqrt(u_val*u_val + v_val*v_val + w_val*w_val);
+
+        std::cout << "Frame " << frame << ": Center velocity magnitude = " << mag << std::endl;
+
+        // Also check total energy
+        float total_u = 0, total_v = 0, total_w = 0;
+        for (int idx = 0; idx < u.size(); idx++) total_u += fabs(u[idx]);
+        for (int idx = 0; idx < v.size(); idx++) total_v += fabs(v[idx]);
+        for (int idx = 0; idx < w.size(); idx++) total_w += fabs(w[idx]);
+
+        std::cout << "Total |u|=" << total_u << ", |v|=" << total_v << ", |w|=" << total_w << std::endl;
     }
 
 private:
@@ -980,7 +1029,28 @@ private:
         set_bnd(0, dens, N+2, N+2, N+2);
     }
 
+    void add_forces() {
+        // Add density at bottom center
+        int centerX = N / 2;
+        int centerY = 2;
+        int centerZ = N / 2;
+
+        for (int k = centerZ-1; k <= centerZ+1; k++) {
+            for (int i = centerX-1; i <= centerX+1; i++) {
+                add_density(i, centerY, k, 150.0f);
+            }
+        }
+
+        // Add upward velocity
+        for (int k = centerZ-1; k <= centerZ+1; k++) {
+            for (int i = centerX-1; i <= centerX+1; i++) {
+                add_velocity(i, centerY, k, 0.0f, 1.5f, 0.0f);
+            }
+        }
+    }
+
     void vel_step() {
+        add_forces();
         advect_velocity(dt);
         diffuse_velocity(dt);
         project();
