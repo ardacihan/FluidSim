@@ -65,6 +65,8 @@ namespace Graphics {
     void renderScene(Grid3D& grid, const SimulationState& state);
     void drawCell(Grid3D& grid, const SimulationState& state, int i, int j, int k);
     void drawVelocityVectors(Grid3D& grid, const SimulationState& state);
+    void drawWireframeSphere(float x, float y, float z, float radius, int segments);
+    void drawSolidSphere(float x, float y, float z, float radius, int segments);
 }
 
 namespace UI {
@@ -136,6 +138,100 @@ void Graphics::drawWireframeBox(float size) {
     glVertex3f(1,0,0); glVertex3f(1,1,0);
     glVertex3f(1,0,1); glVertex3f(1,1,1);
     glVertex3f(0,0,1); glVertex3f(0,1,1);
+    glEnd();
+
+    glPopMatrix();
+}
+
+void Graphics::drawWireframeSphere(float x, float y, float z, float radius, int segments = 16) {
+    glPushMatrix();
+    glTranslatef(x, y, z);
+
+    glColor3f(0.8f, 0.8f, 0.2f); // Yellow sphere
+    glLineWidth(2.0f);
+
+    // Draw longitude lines
+    for (int i = 0; i <= segments; i++) {
+        float lat0 = M_PI * (-0.5f + (float)(i - 1) / segments);
+        float z0 = radius * sin(lat0);
+        float zr0 = radius * cos(lat0);
+
+        float lat1 = M_PI * (-0.5f + (float)i / segments);
+        float z1 = radius * sin(lat1);
+        float zr1 = radius * cos(lat1);
+
+        glBegin(GL_LINE_LOOP);
+        for (int j = 0; j <= segments; j++) {
+            float lng = 2 * M_PI * (float)(j - 1) / segments;
+            float x = cos(lng);
+            float y = sin(lng);
+
+            glVertex3f(x * zr0, y * zr0, z0);
+            glVertex3f(x * zr1, y * zr1, z1);
+        }
+        glEnd();
+    }
+
+    // Draw latitude lines
+    for (int j = 0; j < segments; j++) {
+        float lng0 = 2 * M_PI * (float)(j - 1) / segments;
+        float lng1 = 2 * M_PI * (float)j / segments;
+
+        glBegin(GL_LINE_LOOP);
+        for (int i = 0; i <= segments; i++) {
+            float lat = M_PI * (-0.5f + (float)(i - 1) / segments);
+            float z = radius * sin(lat);
+            float zr = radius * cos(lat);
+
+            glVertex3f(cos(lng0) * zr, sin(lng0) * zr, z);
+            glVertex3f(cos(lng1) * zr, sin(lng1) * zr, z);
+        }
+        glEnd();
+    }
+
+    glPopMatrix();
+}
+
+void Graphics::drawSolidSphere(float x, float y, float z, float radius, int segments = 16) {
+    glPushMatrix();
+    glTranslatef(x, y, z);
+
+    // Semi-transparent yellow
+    glColor4f(0.9f, 0.9f, 0.2f, 0.3f);
+
+    // Generate sphere vertices
+    std::vector<float> vertices;
+    std::vector<unsigned int> indices;
+
+    for (int i = 0; i <= segments; i++) {
+        float lat = M_PI * (-0.5f + (float)i / segments);
+        float z = radius * sin(lat);
+        float zr = radius * cos(lat);
+
+        for (int j = 0; j <= segments; j++) {
+            float lng = 2 * M_PI * (float)j / segments;
+            float x = cos(lng) * zr;
+            float y = sin(lng) * zr;
+
+            vertices.push_back(x);
+            vertices.push_back(y);
+            vertices.push_back(z);
+        }
+    }
+
+    // Draw sphere as quads
+    glBegin(GL_QUADS);
+    for (int i = 0; i < segments; i++) {
+        for (int j = 0; j < segments; j++) {
+            int first = (i * (segments + 1)) + j;
+            int second = first + segments + 1;
+
+            glVertex3f(vertices[first*3], vertices[first*3+1], vertices[first*3+2]);
+            glVertex3f(vertices[second*3], vertices[second*3+1], vertices[second*3+2]);
+            glVertex3f(vertices[second*3+3], vertices[second*3+4], vertices[second*3+5]);
+            glVertex3f(vertices[first*3+3], vertices[first*3+4], vertices[first*3+5]);
+        }
+    }
     glEnd();
 
     glPopMatrix();
@@ -250,6 +346,10 @@ void Graphics::setupCamera(const CameraState& camera) {
 void Graphics::renderScene(Grid3D& grid, const SimulationState& state) {
     // Draw Grid Boundary
     drawWireframeBox((float)GRID_SIZE);
+    drawSolidSphere(grid.sphere_x - 1.0f, grid.sphere_y - 1.0f, grid.sphere_z - 1.0f,
+                       grid.sphere_radius, 20);
+    drawWireframeSphere(grid.sphere_x - 1.0f, grid.sphere_y - 1.0f, grid.sphere_z - 1.0f,
+                          grid.sphere_radius, 12);
 
     // Draw Voxels
     if (state.showSingleLayer) {

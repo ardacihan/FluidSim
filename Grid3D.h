@@ -8,6 +8,11 @@
 
 class Grid3D {
 public:
+    float sphere_radius = 6.0f;
+    float sphere_x = 16.0f;
+    float sphere_y = 16.0f;
+    float sphere_z = 16.0f;
+
     int N; // Grid size (N x N x N) - number of pressure cells
     float dt;
     float diff;
@@ -52,6 +57,138 @@ public:
         w_old.resize(w_count, 0.0f);
     }
 
+    void initSpherePosition() {
+        // Place sphere at center of grid
+        sphere_x = (float)(N + 2) / 2.0f;
+        sphere_y = (float)(N + 2) / 2.0f;
+        sphere_z = (float)(N + 2) / 2.0f;
+        sphere_radius = (float)N / 5.0f;  // Sphere takes ~20% of grid
+
+        std::cout << "[SPHERE] Position: (" << sphere_x << ", " << sphere_y << ", " << sphere_z
+                  << "), Radius: " << sphere_radius << std::endl;
+    }
+
+    bool isInsideSphere(float x, float y, float z) const {
+        float dx = x - sphere_x;
+        float dy = y - sphere_y;
+        float dz = z - sphere_z;
+        return (dx*dx + dy*dy + dz*dz) <= (sphere_radius * sphere_radius);
+    }
+
+    bool isUFaceBlocked(int i, int j, int k) const {
+        // u-face is at (i, j+0.5, k+0.5) in pressure grid coordinates
+        float x = (float)i + 0.5f;
+        float y = (float)j + 1.0f;  // +0.5 + 0.5 (cell center offset)
+        float z = (float)k + 1.0f;  // +0.5 + 0.5
+
+        return isInsideSphere(x, y, z);
+    }
+
+    bool isVFaceBlocked(int i, int j, int k) const {
+        // v-face is at (i+0.5, j, k+0.5)
+        float x = (float)i + 1.0f;
+        float y = (float)j + 0.5f;
+        float z = (float)k + 1.0f;
+
+        return isInsideSphere(x, y, z);
+    }
+
+    bool isWFaceBlocked(int i, int j, int k) const {
+        // w-face is at (i+0.5, j+0.5, k)
+        float x = (float)i + 1.0f;
+        float y = (float)j + 1.0f;
+        float z = (float)k + 0.5f;
+
+        return isInsideSphere(x, y, z);
+    }
+
+    bool isPressureCellBlocked(int i, int j, int k) const {
+        // Pressure cell is at (i+0.5, j+0.5, k+0.5)
+        float x = (float)i + 1.0f;
+        float y = (float)j + 1.0f;
+        float z = (float)k + 1.0f;
+
+        return isInsideSphere(x, y, z);
+    }
+
+    void set_bnd_with_sphere(int b, std::vector<float>& x, int size_x, int size_y, int size_z) {
+        // First apply normal boundaries
+        set_bnd(b, x, size_x, size_y, size_z);
+
+        // Then set sphere boundaries (no-slip condition)
+        if (b == 1) { // u velocities
+            for (int k = 1; k < size_z-1; k++) {
+                for (int j = 1; j < size_y-1; j++) {
+                    for (int i = 1; i < size_x-1; i++) {
+                        if (isUFaceBlocked(i-1, j-1, k-1)) { // Convert to grid coordinates
+                            x[i + j*size_x + k*size_x*size_y] = 0.0f;
+                        }
+                    }
+                }
+            }
+        } else if (b == 2) { // v velocities
+            for (int k = 1; k < size_z-1; k++) {
+                for (int j = 1; j < size_y-1; j++) {
+                    for (int i = 1; i < size_x-1; i++) {
+                        if (isVFaceBlocked(i-1, j-1, k-1)) {
+                            x[i + j*size_x + k*size_x*size_y] = 0.0f;
+                        }
+                    }
+                }
+            }
+        } else if (b == 3) { // w velocities
+            for (int k = 1; k < size_z-1; k++) {
+                for (int j = 1; j < size_y-1; j++) {
+                    for (int i = 1; i < size_x-1; i++) {
+                        if (isWFaceBlocked(i-1, j-1, k-1)) {
+                            x[i + j*size_x + k*size_x*size_y] = 0.0f;
+                        }
+                    }
+                }
+            }
+        } else if (b == 0) { // Pressure/density - Neumann boundary at sphere
+            for (int k = 1; k < size_z-1; k++) {
+                for (int j = 1; j < size_y-1; j++) {
+                    for (int i = 1; i < size_x-1; i++) {
+                        if (isPressureCellBlocked(i-1, j-1, k-1)) {
+                            // Set pressure to average of non-sphere neighbors
+                            float sum = 0.0f;
+                            int count = 0;
+
+                            if (!isPressureCellBlocked(i-2, j-1, k-1)) {
+                                sum += x[(i-1) + j*size_x + k*size_x*size_y];
+                                count++;
+                            }
+                            if (!isPressureCellBlocked(i, j-1, k-1)) {
+                                sum += x[(i+1) + j*size_x + k*size_x*size_y];
+                                count++;
+                            }
+                            if (!isPressureCellBlocked(i-1, j-2, k-1)) {
+                                sum += x[i + (j-1)*size_x + k*size_x*size_y];
+                                count++;
+                            }
+                            if (!isPressureCellBlocked(i-1, j, k-1)) {
+                                sum += x[i + (j+1)*size_x + k*size_x*size_y];
+                                count++;
+                            }
+                            if (!isPressureCellBlocked(i-1, j-1, k-2)) {
+                                sum += x[i + j*size_x + (k-1)*size_x*size_y];
+                                count++;
+                            }
+                            if (!isPressureCellBlocked(i-1, j-1, k)) {
+                                sum += x[i + j*size_x + (k+1)*size_x*size_y];
+                                count++;
+                            }
+
+                            if (count > 0) {
+                                x[i + j*size_x + k*size_x*size_y] = sum / count;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Pressure/density at cell center (i, j, k)
     inline int P_IX(int i, int j, int k) const {
@@ -610,7 +747,7 @@ private:
             }
         }
     }
-    set_bnd(1, u, N+1, N+2, N+2);
+    set_bnd_with_sphere(1, u, N+1, N+2, N+2);
 
     // Advect v (y-faces)
     for (int k = 1; k <= N; k++) {
@@ -638,7 +775,7 @@ private:
             }
         }
     }
-    set_bnd(2, v, N+2, N+1, N+2);
+    set_bnd_with_sphere(2, v, N+2, N+1, N+2);
 
     // Advect w (z-faces)
     for (int k = 0; k <= N; k++) {
@@ -666,7 +803,7 @@ private:
             }
         }
     }
-    set_bnd(3, w, N+2, N+2, N+1);
+    set_bnd_with_sphere(3, w, N+2, N+2, N+1);
 }
 
     void advect_density(float dt) {
@@ -702,7 +839,7 @@ private:
                 }
             }
         }
-        set_bnd(0, dens, N+2, N+2, N+2);
+        set_bnd_with_sphere(0, dens, N+2, N+2, N+2);
     }
 
     void diffuse_velocity(float dt) {
@@ -748,7 +885,7 @@ private:
                 }
             }
         }
-        set_bnd(1, u_new, N+1, N+2, N+2);
+        set_bnd_with_sphere(1, u_new, N+1, N+2, N+2);
     }
     u = std::move(u_new);
 
@@ -774,7 +911,7 @@ private:
                 }
             }
         }
-        set_bnd(2, v_new, N+2, N+1, N+2);
+        set_bnd_with_sphere(2, v_new, N+2, N+1, N+2);
     }
     v = std::move(v_new);
 
@@ -800,7 +937,7 @@ private:
                 }
             }
         }
-        set_bnd(3, w_new, N+2, N+2, N+1);
+        set_bnd_with_sphere(3, w_new, N+2, N+2, N+1);
     }
     w = std::move(w_new);
 }
@@ -829,7 +966,7 @@ private:
                     }
                 }
             }
-            set_bnd(0, dens_new, N+2, N+2, N+2);
+            set_bnd_with_sphere(0, dens_new, N+2, N+2, N+2);
         }
         dens = std::move(dens_new);
     }
@@ -866,7 +1003,7 @@ private:
                 }
             }
         }
-        set_bnd(0, div, size, size, size);
+        set_bnd_with_sphere(0, div, size, size, size);
 
         std::cout << "[PROJECT] Max divergence before: " << max_div_before << std::endl;
 
@@ -916,7 +1053,7 @@ private:
                     }
                 }
             }
-            set_bnd(0, p, size, size, size);
+            set_bnd_with_sphere(0, p, size, size, size);
 
             // Black cells
             for (int k = 1; k <= N; k++) {
@@ -940,7 +1077,7 @@ private:
                     }
                 }
             }
-            set_bnd(0, p, size, size, size);
+            set_bnd_with_sphere(0, p, size, size, size);
 
             if (max_change < tolerance) {
                 std::cout << "[PROJECT] Converged after " << iter+1 << " iterations" << std::endl;
@@ -1009,9 +1146,9 @@ private:
         }
 
         // Apply boundary conditions
-        set_bnd(1, u, N+1, N+2, N+2);
-        set_bnd(2, v, N+2, N+1, N+2);
-        set_bnd(3, w, N+2, N+2, N+1);
+        set_bnd_with_sphere(1, u, N+1, N+2, N+2);
+        set_bnd_with_sphere(2, v, N+2, N+1, N+2);
+        set_bnd_with_sphere(3, w, N+2, N+2, N+1);
     }
 
     void dissipate_density(float dt, float alpha = 0.1f) {
@@ -1026,7 +1163,7 @@ private:
                 }
             }
         }
-        set_bnd(0, dens, N+2, N+2, N+2);
+        set_bnd_with_sphere(0, dens, N+2, N+2, N+2);
     }
 
     void add_forces() {
