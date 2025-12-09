@@ -10,7 +10,7 @@ public:
     int N; // Grid size (N x N x N) - number of pressure cells
     float dt;
     float diff;
-    float visc;
+    float visc; // viscosity value, high visc -> honey, low visc -> water/air
 
     // Pressure at cell center
     std::vector<float> p;
@@ -20,7 +20,7 @@ public:
     std::vector<float> v;
     std::vector<float> w;
 
-    std::vector<float> u_old, v_old, w_old;
+    std::vector<float> u_old, v_old, w_old; // helper variables for vel advection
 
     // Density at cell center
     std::vector<float> dens;
@@ -240,7 +240,6 @@ public:
         project();
     }
 
-    // PUBLIC interpolation functions for visualization
     float interpolate_density(float x, float y, float z) const {
         x = std::max(0.5f, std::min((float)N + 0.5f, x));
         y = std::max(0.5f, std::min((float)N + 0.5f, y));
@@ -268,89 +267,89 @@ public:
                s*t*u*dens_old[P_IX(i+1, j+1, k+1)];
     }
 
-float interpolate_u(float x, float y, float z) const {
-    x = std::max(0.5f, std::min((float)N + 0.5f, x));
-    y = std::max(0.5f, std::min((float)N + 1.5f, y));
-    z = std::max(0.5f, std::min((float)N + 1.5f, z));
+    float interpolate_u(float x, float y, float z) const {
+        x = std::max(0.5f, std::min((float)N + 0.5f, x));
+        y = std::max(0.5f, std::min((float)N + 1.5f, y));
+        z = std::max(0.5f, std::min((float)N + 1.5f, z));
 
-    int i = (int)floor(x - 0.5f);
-    int j = (int)floor(y - 0.5f);
-    int k = (int)floor(z - 0.5f);
+        int i = (int)floor(x - 0.5f);
+        int j = (int)floor(y - 0.5f);
+        int k = (int)floor(z - 0.5f);
 
-    float s = (x - 0.5f) - i;
-    float t = (y - 0.5f) - j;
-    float uu = (z - 0.5f) - k;  // Renamed from u to avoid name conflict
+        float s = (x - 0.5f) - i;
+        float t = (y - 0.5f) - j;
+        float uu = (z - 0.5f) - k;  // Renamed from u to avoid name conflict
 
-    i = std::max(0, std::min(N, i));
-    j = std::max(0, std::min(N+1, j));
-    k = std::max(0, std::min(N+1, k));
+        i = std::max(0, std::min(N, i));
+        j = std::max(0, std::min(N+1, j));
+        k = std::max(0, std::min(N+1, k));
 
-    // Use current u array instead of u_old
-    return (1-s)*(1-t)*(1-uu)*u[U_IX(i, j, k)] +
-           s*(1-t)*(1-uu)*u[U_IX(i+1, j, k)] +
-           (1-s)*t*(1-uu)*u[U_IX(i, j+1, k)] +
-           s*t*(1-uu)*u[U_IX(i+1, j+1, k)] +
-           (1-s)*(1-t)*uu*u[U_IX(i, j, k+1)] +
-           s*(1-t)*uu*u[U_IX(i+1, j, k+1)] +
-           (1-s)*t*uu*u[U_IX(i, j+1, k+1)] +
-           s*t*uu*u[U_IX(i+1, j+1, k+1)];
-}
+        // Use current u array instead of u_old
+        return (1-s)*(1-t)*(1-uu)*u[U_IX(i, j, k)] +
+               s*(1-t)*(1-uu)*u[U_IX(i+1, j, k)] +
+               (1-s)*t*(1-uu)*u[U_IX(i, j+1, k)] +
+               s*t*(1-uu)*u[U_IX(i+1, j+1, k)] +
+               (1-s)*(1-t)*uu*u[U_IX(i, j, k+1)] +
+               s*(1-t)*uu*u[U_IX(i+1, j, k+1)] +
+               (1-s)*t*uu*u[U_IX(i, j+1, k+1)] +
+               s*t*uu*u[U_IX(i+1, j+1, k+1)];
+    }
 
-float interpolate_v(float x, float y, float z) const {
-    x = std::max(0.5f, std::min((float)N + 1.5f, x));
-    y = std::max(0.5f, std::min((float)N + 0.5f, y));
-    z = std::max(0.5f, std::min((float)N + 1.5f, z));
+    float interpolate_v(float x, float y, float z) const {
+        x = std::max(0.5f, std::min((float)N + 1.5f, x));
+        y = std::max(0.5f, std::min((float)N + 0.5f, y));
+        z = std::max(0.5f, std::min((float)N + 1.5f, z));
 
-    int i = (int)floor(x - 0.5f);
-    int j = (int)floor(y - 0.5f);
-    int k = (int)floor(z - 0.5f);
+        int i = (int)floor(x - 0.5f);
+        int j = (int)floor(y - 0.5f);
+        int k = (int)floor(z - 0.5f);
 
-    float s = (x - 0.5f) - i;
-    float t = (y - 0.5f) - j;
-    float uu = (z - 0.5f) - k;  // Renamed from u to avoid name conflict
+        float s = (x - 0.5f) - i;
+        float t = (y - 0.5f) - j;
+        float uu = (z - 0.5f) - k;  // Renamed from u to avoid name conflict
 
-    i = std::max(0, std::min(N+1, i));
-    j = std::max(0, std::min(N, j));
-    k = std::max(0, std::min(N+1, k));
+        i = std::max(0, std::min(N+1, i));
+        j = std::max(0, std::min(N, j));
+        k = std::max(0, std::min(N+1, k));
 
-    // Use current v array instead of v_old
-    return (1-s)*(1-t)*(1-uu)*v[V_IX(i, j, k)] +
-           s*(1-t)*(1-uu)*v[V_IX(i+1, j, k)] +
-           (1-s)*t*(1-uu)*v[V_IX(i, j+1, k)] +
-           s*t*(1-uu)*v[V_IX(i+1, j+1, k)] +
-           (1-s)*(1-t)*uu*v[V_IX(i, j, k+1)] +
-           s*(1-t)*uu*v[V_IX(i+1, j, k+1)] +
-           (1-s)*t*uu*v[V_IX(i, j+1, k+1)] +
-           s*t*uu*v[V_IX(i+1, j+1, k+1)];
-}
+        // Use current v array instead of v_old
+        return (1-s)*(1-t)*(1-uu)*v[V_IX(i, j, k)] +
+               s*(1-t)*(1-uu)*v[V_IX(i+1, j, k)] +
+               (1-s)*t*(1-uu)*v[V_IX(i, j+1, k)] +
+               s*t*(1-uu)*v[V_IX(i+1, j+1, k)] +
+               (1-s)*(1-t)*uu*v[V_IX(i, j, k+1)] +
+               s*(1-t)*uu*v[V_IX(i+1, j, k+1)] +
+               (1-s)*t*uu*v[V_IX(i, j+1, k+1)] +
+               s*t*uu*v[V_IX(i+1, j+1, k+1)];
+    }
 
-float interpolate_w(float x, float y, float z) const {
-    x = std::max(0.5f, std::min((float)N + 1.5f, x));
-    y = std::max(0.5f, std::min((float)N + 1.5f, y));
-    z = std::max(0.5f, std::min((float)N + 0.5f, z));
+    float interpolate_w(float x, float y, float z) const {
+        x = std::max(0.5f, std::min((float)N + 1.5f, x));
+        y = std::max(0.5f, std::min((float)N + 1.5f, y));
+        z = std::max(0.5f, std::min((float)N + 0.5f, z));
 
-    int i = (int)floor(x - 0.5f);
-    int j = (int)floor(y - 0.5f);
-    int k = (int)floor(z - 0.5f);
+        int i = (int)floor(x - 0.5f);
+        int j = (int)floor(y - 0.5f);
+        int k = (int)floor(z - 0.5f);
 
-    float s = (x - 0.5f) - i;
-    float t = (y - 0.5f) - j;
-    float uu = (z - 0.5f) - k;  // Renamed from u to avoid name conflict
+        float s = (x - 0.5f) - i;
+        float t = (y - 0.5f) - j;
+        float uu = (z - 0.5f) - k;  // Renamed from u to avoid name conflict
 
-    i = std::max(0, std::min(N+1, i));
-    j = std::max(0, std::min(N+1, j));
-    k = std::max(0, std::min(N, k));
+        i = std::max(0, std::min(N+1, i));
+        j = std::max(0, std::min(N+1, j));
+        k = std::max(0, std::min(N, k));
 
-    // Use current w array instead of w_old
-    return (1-s)*(1-t)*(1-uu)*w[W_IX(i, j, k)] +
-           s*(1-t)*(1-uu)*w[W_IX(i+1, j, k)] +
-           (1-s)*t*(1-uu)*w[W_IX(i, j+1, k)] +
-           s*t*(1-uu)*w[W_IX(i+1, j+1, k)] +
-           (1-s)*(1-t)*uu*w[W_IX(i, j, k+1)] +
-           s*(1-t)*uu*w[W_IX(i+1, j, k+1)] +
-           (1-s)*t*uu*w[W_IX(i, j+1, k+1)] +
-           s*t*uu*w[W_IX(i+1, j+1, k+1)];
-}
+        // Use current w array instead of w_old
+        return (1-s)*(1-t)*(1-uu)*w[W_IX(i, j, k)] +
+               s*(1-t)*(1-uu)*w[W_IX(i+1, j, k)] +
+               (1-s)*t*(1-uu)*w[W_IX(i, j+1, k)] +
+               s*t*(1-uu)*w[W_IX(i+1, j+1, k)] +
+               (1-s)*(1-t)*uu*w[W_IX(i, j, k+1)] +
+               s*(1-t)*uu*w[W_IX(i+1, j, k+1)] +
+               (1-s)*t*uu*w[W_IX(i, j+1, k+1)] +
+               s*t*uu*w[W_IX(i+1, j+1, k+1)];
+    }
 
 private:
 
@@ -362,29 +361,367 @@ private:
     }
 
     void set_bnd(int b, std::vector<float>& x, int size_x, int size_y, int size_z) {
+        // b indicates the type of field:
+        // 0 = scalar (density, temperature)
+        // 1 = u velocity
+        // 2 = v velocity
+        // 3 = w velocity
+
+        // Set boundaries for each face
+
+        // X boundaries (i = 0 and i = size_x-1)
+        for (int k = 1; k < size_z-1; k++) {
+            for (int j = 1; j < size_y-1; j++) {
+
+                if (b == 1) {
+                    x[0 + j*size_x + k*size_x*size_y] = 0.0f;
+                } else {
+                    x[0 + j*size_x + k*size_x*size_y] = x[1 + j*size_x + k*size_x*size_y];
+                }
+                if (b == 1) {
+                    x[(size_x-1) + j*size_x + k*size_x*size_y] = 0.0f;
+                } else {
+                    x[(size_x-1) + j*size_x + k*size_x*size_y] = x[(size_x-2) + j*size_x + k*size_x*size_y];
+                }
+            }
+        }
+
+        // Y boundaries (j = 0 and j = size_y-1)
+        for (int k = 1; k < size_z-1; k++) {
+            for (int i = 1; i < size_x-1; i++) {
+                if (b == 2) {
+                    x[i + 0*size_x + k*size_x*size_y] = 0.0f;
+                } else {
+                    x[i + 0*size_x + k*size_x*size_y] = x[i + 1*size_x + k*size_x*size_y];
+                }
+                if (b == 2) {
+                    x[i + (size_y-1)*size_x + k*size_x*size_y] = 0.0f;
+                } else {
+                    x[i + (size_y-1)*size_x + k*size_x*size_y] = x[i + (size_y-2)*size_x + k*size_x*size_y];
+                }
+            }
+        }
+
+        for (int j = 1; j < size_y-1; j++) {
+            for (int i = 1; i < size_x-1; i++) {
+                if (b == 3) {
+                    x[i + j*size_x + 0*size_x*size_y] = 0.0f;
+                } else {
+                    x[i + j*size_x + 0*size_x*size_y] = x[i + j*size_x + 1*size_x*size_y];
+                }
+                if (b == 3) {
+                    x[i + j*size_x + (size_z-1)*size_x*size_y] = 0.0f;
+                } else {
+                    x[i + j*size_x + (size_z-1)*size_x*size_y] = x[i + j*size_x + (size_z-2)*size_x*size_y];
+                }
+            }
+        }
+
+        // Set corners (average of adjacent faces for better stability)
+
+        // 8 corners
+        int corners[8][3] = {
+            {0, 0, 0}, {size_x-1, 0, 0},
+            {0, size_y-1, 0}, {size_x-1, size_y-1, 0},
+            {0, 0, size_z-1}, {size_x-1, 0, size_z-1},
+            {0, size_y-1, size_z-1}, {size_x-1, size_y-1, size_z-1}
+        };
+
+        for (int c = 0; c < 8; c++) {
+            int i = corners[c][0];
+            int j = corners[c][1];
+            int k = corners[c][2];
+
+            float sum = 0.0f;
+            int count = 0;
+
+            // Average valid neighbors
+            if (i > 0) { sum += x[(i-1) + j*size_x + k*size_x*size_y]; count++; }
+            if (i < size_x-1) { sum += x[(i+1) + j*size_x + k*size_x*size_y]; count++; }
+            if (j > 0) { sum += x[i + (j-1)*size_x + k*size_x*size_y]; count++; }
+            if (j < size_y-1) { sum += x[i + (j+1)*size_x + k*size_x*size_y]; count++; }
+            if (k > 0) { sum += x[i + j*size_x + (k-1)*size_x*size_y]; count++; }
+            if (k < size_z-1) { sum += x[i + j*size_x + (k+1)*size_x*size_y]; count++; }
+
+            if (count > 0) {
+                x[i + j*size_x + k*size_x*size_y] = sum / count;
+            }
+        }
     }
 
-    void project() {
+    void advect_velocity(float dt) {
+        // Copy current velocities to old arrays
+        std::copy(u.begin(), u.end(), u_old.begin());
+        std::copy(v.begin(), v.end(), v_old.begin());
+        std::copy(w.begin(), w.end(), w_old.begin());
+
+        // Advect u
+        for (int k = 1; k <= N; k++) {
+            for (int j = 1; j <= N; j++) {
+                for (int i = 0; i <= N; i++) {
+                    float x = (float)i + 0.5f;
+                    float y = (float)j + 0.5f;
+                    float z = (float)k + 0.5f;
+
+                    float u_vel = u_old[U_IX(i, j, k)];
+                    float v_vel = 0.25f * (
+                        v_old[V_IX(i, j-1, k)] + v_old[V_IX(i, j, k)] +
+                        v_old[V_IX(i+1, j-1, k)] + v_old[V_IX(i+1, j, k)]
+                    );
+                    float w_vel = 0.25f * (
+                        w_old[W_IX(i, j, k-1)] + w_old[W_IX(i, j, k)] +
+                        w_old[W_IX(i+1, j, k-1)] + w_old[W_IX(i+1, j, k)]
+                    );
+
+                    float srcX = x - dt * u_vel;
+                    float srcY = y - dt * v_vel;
+                    float srcZ = z - dt * w_vel;
+
+                    u[U_IX(i, j, k)] = interpolate_u(srcX, srcY, srcZ);
+                }
+            }
+        }
+         set_bnd(1, u, N+1, N+2, N+2);
+
+        //v
+        for (int k = 1; k <= N; k++) {
+            for (int j = 0; j <= N; j++) {
+                for (int i = 1; i <= N; i++) {
+                    float x = (float)i + 0.5f;
+                    float y = (float)j + 0.5f;
+                    float z = (float)k + 0.5f;
+
+                    float u_vel = 0.25f * (
+                        u_old[U_IX(i-1, j, k)] + u_old[U_IX(i, j, k)] +
+                        u_old[U_IX(i-1, j+1, k)] + u_old[U_IX(i, j+1, k)]
+                    );
+                    float v_vel = v_old[V_IX(i, j, k)];
+                    float w_vel = 0.25f * (
+                        w_old[W_IX(i, j, k-1)] + w_old[W_IX(i, j, k)] +
+                        w_old[W_IX(i, j+1, k-1)] + w_old[W_IX(i, j+1, k)]
+                    );
+
+                    float srcX = x - dt * u_vel;
+                    float srcY = y - dt * v_vel;
+                    float srcZ = z - dt * w_vel;
+
+                    v[V_IX(i, j, k)] = interpolate_v(srcX, srcY, srcZ);
+                }
+            }
+        }
+        // boundary  v
+        set_bnd(2, v, N+2, N+1, N+2);
+
+        // w
+        for (int k = 0; k <= N; k++) {
+            for (int j = 1; j <= N; j++) {
+                for (int i = 1; i <= N; i++) {
+                    float x = (float)i + 0.5f;
+                    float y = (float)j + 0.5f;
+                    float z = (float)k + 0.5f;
+
+                    float u_vel = 0.25f * (
+                        u_old[U_IX(i-1, j, k)] + u_old[U_IX(i, j, k)] +
+                        u_old[U_IX(i-1, j, k+1)] + u_old[U_IX(i, j, k+1)]
+                    );
+                    float v_vel = 0.25f * (
+                        v_old[V_IX(i, j-1, k)] + v_old[V_IX(i, j, k)] +
+                        v_old[V_IX(i, j-1, k+1)] + v_old[V_IX(i, j, k+1)]
+                    );
+                    float w_vel = w_old[W_IX(i, j, k)];
+
+                    float srcX = x - dt * u_vel;
+                    float srcY = y - dt * v_vel;
+                    float srcZ = z - dt * w_vel;
+
+                    w[W_IX(i, j, k)] = interpolate_w(srcX, srcY, srcZ);
+                }
+            }
+        }
+        // boundary w
+        set_bnd(3, w, N+2, N+2, N+1);
     }
 
-    void advect(std::vector<float>& d, std::vector<float>& d0,
-                const std::vector<float>& u, const std::vector<float>& v, const std::vector<float>& w,
-                int size_x, int size_y, int size_z, float dt) {
+    void advect_density(float dt) {
+
     }
 
     void vel_step() {
+        add_velocity(0,0,0,0,0,0);           // Add gravity, user forces, etc.
+        diffuse_velocity(dt);     // Apply viscosity (if visc > 0)
+        project();               // Make divergence-free (pressure solve)
+        advect_velocity(dt);     // Move velocity with itself
+        project();               // Make divergence-free again
     }
 
     void dens_step() {
-
+        add_density(0,0,0,0);  // Add new density
+        diffuse_density(dt);      // Apply diffusion (if diff > 0)
+        advect_density(dt);       // Move density with velocity
     }
 
-    void add_source(std::vector<float>& x, const std::vector<float>& s, float dt,
-                    int size_x, int size_y, int size_z) {
+    void add_source(int u,int v, int w, int size_x, int size_y, int size_z) {
     }
 
-    void diffuse(int b, std::vector<float>& x, std::vector<float>& x0, float diff, float dt,
-                 int size_x, int size_y, int size_z) {
+    void diffuse_velocity(float dt) {
+    }
+    void diffuse_density(float dt) {
+    }
+
+    float computeDivergence(int i, int j, int k) const {
+        // equation (4.22) in paper
+
+        float u_right = u[U_IX(i, j, k)];
+        float u_left = u[U_IX(i-1, j, k)];
+
+        float v_top = v[V_IX(i, j, k)];
+        float v_bottom = v[V_IX(i, j-1, k)];
+
+        float w_front = w[W_IX(i, j, k)];
+        float w_back = w[W_IX(i, j, k-1)];
+
+        return (u_right - u_left) + (v_top - v_bottom) + (w_front - w_back);
+    }
+
+     void project() {
+        int size = N + 2;
+        float rho = 1.0f;  // Density (water = 1000 kg/m³, but we use 1.0)
+        float dx = 1.0f;   // Grid spacing
+
+        // Step 1: Compute divergence at each fluid cell
+        std::vector<float> div((N+2)*(N+2)*(N+2), 0.0f);
+        for (int k = 1; k <= N; k++) {
+            for (int j = 1; j <= N; j++) {
+                for (int i = 1; i <= N; i++) {
+                    div[P_IX(i, j, k)] = computeDivergence(i, j, k);
+                }
+            }
+        }
+        set_bnd(0, div, size, size, size);
+
+        // Step 2: Solve the linear system: A * p = b
+        // Where A is: 6p - sum_neighbors = (ρ * dx² / Δt) * (-div)
+        // Rearranged: p = (sum_neighbors - (ρ * dx² / Δt) * div) / 6
+
+        float scale = rho * dx * dx / dt;
+        std::vector<float> p_new = p;  // Copy current pressure
+
+        for (int iter = 0; iter < 50; iter++) {
+            for (int k = 1; k <= N; k++) {
+                for (int j = 1; j <= N; j++) {
+                    for (int i = 1; i <= N; i++) {
+                        int idx = P_IX(i, j, k);
+
+                        // Get neighbor pressures
+                        float sum_neighbors = 0.0f;
+                        int neighbor_count = 0;
+
+                        // Check each neighbor (fluid cells only)
+                        if (i > 1) {
+                            sum_neighbors += p[P_IX(i-1, j, k)];
+                            neighbor_count++;
+                        }
+                        if (i < N) {
+                            sum_neighbors += p[P_IX(i+1, j, k)];
+                            neighbor_count++;
+                        }
+                        if (j > 1) {
+                            sum_neighbors += p[P_IX(i, j-1, k)];
+                            neighbor_count++;
+                        }
+                        if (j < N) {
+                            sum_neighbors += p[P_IX(i, j+1, k)];
+                            neighbor_count++;
+                        }
+                        if (k > 1) {
+                            sum_neighbors += p[P_IX(i, j, k-1)];
+                            neighbor_count++;
+                        }
+                        if (k < N) {
+                            sum_neighbors += p[P_IX(i, j, k+1)];
+                            neighbor_count++;
+                        }
+
+                        // Apply equation from paper
+                        if (neighbor_count == 6) {
+                            // Interior cell: all 6 neighbors are fluid
+                            p_new[idx] = (sum_neighbors - scale * div[idx]) / 6.0f;
+                        } else if (neighbor_count > 0) {
+                            // Boundary cell: some neighbors are solid
+                            p_new[idx] = (sum_neighbors - scale * div[idx]) / (float)neighbor_count;
+                        }
+                    }
+                }
+            }
+
+            // Swap p and p_new
+            std::swap(p, p_new);
+            set_bnd(0, p, size, size, size);
+        }
+
+        // Step 3: Apply pressure gradient to velocities
+        applyPressureGradient();
+    }
+
+
+    void applyPressureGradient() {
+        float pressure_scale = dt;  // dt/ρ with ρ=1.0
+
+        // Update u velocities
+        for (int k = 1; k <= N; k++) {
+            for (int j = 1; j <= N; j++) {
+                for (int i = 0; i <= N; i++) {
+                    // Get velocity at this u-face BEFORE pressure
+                    auto vel = getVelocityAtUFace(i, j, k);
+                    float u_before = vel[0];
+
+                    // Pressure gradient: (p_right - p_left)
+                    float p_right = p[P_IX(i+1, j, k)];
+                    float p_left = p[P_IX(i, j, k)];
+                    float pressure_grad = p_right - p_left;
+
+                    // Update: u_new = u_old - (Δt/ρ) * ∇p
+                    u[U_IX(i, j, k)] = u_before - pressure_scale * pressure_grad;
+                }
+            }
+        }
+
+        // Update v velocities (y-faces)
+        for (int k = 1; k <= N; k++) {
+            for (int j = 0; j <= N; j++) {
+                for (int i = 1; i <= N; i++) {
+                    auto vel = getVelocityAtVFace(i, j, k);
+                    float v_before = vel[1];
+
+                    float p_top = p[P_IX(i, j+1, k)];
+                    float p_bottom = p[P_IX(i, j, k)];
+                    float pressure_grad = p_top - p_bottom;
+
+                    v[V_IX(i, j, k)] = v_before - pressure_scale * pressure_grad;
+                }
+            }
+        }
+
+        // Update w velocities
+        for (int k = 0; k <= N; k++) {
+            for (int j = 1; j <= N; j++) {
+                for (int i = 1; i <= N; i++) {
+                    auto vel = getVelocityAtWFace(i, j, k);
+                    float w_before = vel[2];
+
+                    float p_front = p[P_IX(i, j, k+1)];
+                    float p_back = p[P_IX(i, j, k)];
+                    float pressure_grad = p_front - p_back;
+
+                    w[W_IX(i, j, k)] = w_before - pressure_scale * pressure_grad;
+                }
+            }
+        }
+
+        // Apply boundary conditions
+        set_bnd(1, u, N+1, N+2, N+2);
+        set_bnd(2, v, N+2, N+1, N+2);
+        set_bnd(3, w, N+2, N+2, N+1);
     }
 };
 
