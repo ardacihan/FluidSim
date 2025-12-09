@@ -17,6 +17,8 @@ public:
     float dt;
     float diff;
     float visc; // viscosity value, high visc -> honey, low visc -> water/air
+    float h = 1.0f;  // Cell size in world units
+    float inv_h = 1.0f;  // 1/h
 
     // Pressure at cell center
     std::vector<float> p;
@@ -55,6 +57,8 @@ public:
         int w_count = (N + 2) * (N + 2) * (N + 1);
         w.resize(w_count, 0.0f);
         w_old.resize(w_count, 0.0f);
+        h = 1.0f / N;  // Cell size
+        inv_h = N;      // 1/h
     }
 
     void initSpherePosition() {
@@ -713,98 +717,98 @@ private:
     }
 
     void advect_velocity(float dt) {
-    // Save current velocities to old arrays
-    std::copy(u.begin(), u.end(), u_old.begin());
-    std::copy(v.begin(), v.end(), v_old.begin());
-    std::copy(w.begin(), w.end(), w_old.begin());
+        // Save current velocities to old arrays
+        std::copy(u.begin(), u.end(), u_old.begin());
+        std::copy(v.begin(), v.end(), v_old.begin());
+        std::copy(w.begin(), w.end(), w_old.begin());
 
-    // Advect u (x-faces)
-    for (int k = 1; k <= N; k++) {
-        for (int j = 1; j <= N; j++) {
-            for (int i = 0; i <= N; i++) {
-                float x = (float)i + 0.5f;
-                float y = (float)j + 0.5f;
-                float z = (float)k + 0.5f;
+        // Advect u (x-faces)
+        for (int k = 1; k <= N; k++) {
+            for (int j = 1; j <= N; j++) {
+                for (int i = 0; i <= N; i++) {
+                    float x = (float)i + 0.5f;
+                    float y = (float)j + 0.5f;
+                    float z = (float)k + 0.5f;
 
-                // Get velocity at this u-face from OLD arrays
-                float u_vel = u_old[U_IX(i, j, k)];
-                float v_vel = 0.25f * (
-                    v_old[V_IX(i, j-1, k)] + v_old[V_IX(i, j, k)] +
-                    v_old[V_IX(i+1, j-1, k)] + v_old[V_IX(i+1, j, k)]
-                );
-                float w_vel = 0.25f * (
-                    w_old[W_IX(i, j, k-1)] + w_old[W_IX(i, j, k)] +
-                    w_old[W_IX(i+1, j, k-1)] + w_old[W_IX(i+1, j, k)]
-                );
+                    // Get velocity at this u-face from OLD arrays
+                    float u_vel = u_old[U_IX(i, j, k)];
+                    float v_vel = 0.25f * (
+                        v_old[V_IX(i, j-1, k)] + v_old[V_IX(i, j, k)] +
+                        v_old[V_IX(i+1, j-1, k)] + v_old[V_IX(i+1, j, k)]
+                    );
+                    float w_vel = 0.25f * (
+                        w_old[W_IX(i, j, k-1)] + w_old[W_IX(i, j, k)] +
+                        w_old[W_IX(i+1, j, k-1)] + w_old[W_IX(i+1, j, k)]
+                    );
 
-                // Backtrace
-                float srcX = x - dt  * u_vel;
-                float srcY = y - dt  * v_vel;
-                float srcZ = z - dt  * w_vel;
+                    // Backtrace
+                    float srcX = x - dt * u_vel* inv_h;
+                    float srcY = y - dt * v_vel* inv_h;
+                    float srcZ = z - dt * w_vel* inv_h;
 
-                // Interpolate from OLD u field
-                u[U_IX(i, j, k)] = interpolate_u_old(srcX, srcY, srcZ);
+                    // Interpolate from OLD u field
+                    u[U_IX(i, j, k)] = interpolate_u_old(srcX, srcY, srcZ);
+                }
             }
         }
-    }
-    set_bnd_with_sphere(1, u, N+1, N+2, N+2);
+        set_bnd_with_sphere(1, u, N+1, N+2, N+2);
 
-    // Advect v (y-faces)
-    for (int k = 1; k <= N; k++) {
-        for (int j = 0; j <= N; j++) {
-            for (int i = 1; i <= N; i++) {
-                float x = (float)i + 0.5f;
-                float y = (float)j + 0.5f;
-                float z = (float)k + 0.5f;
+        // Advect v (y-faces)
+        for (int k = 1; k <= N; k++) {
+            for (int j = 0; j <= N; j++) {
+                for (int i = 1; i <= N; i++) {
+                    float x = (float)i + 0.5f;
+                    float y = (float)j + 0.5f;
+                    float z = (float)k + 0.5f;
 
-                float u_vel = 0.25f * (
-                    u_old[U_IX(i-1, j, k)] + u_old[U_IX(i, j, k)] +
-                    u_old[U_IX(i-1, j+1, k)] + u_old[U_IX(i, j+1, k)]
-                );
-                float v_vel = v_old[V_IX(i, j, k)];
-                float w_vel = 0.25f * (
-                    w_old[W_IX(i, j, k-1)] + w_old[W_IX(i, j, k)] +
-                    w_old[W_IX(i, j+1, k-1)] + w_old[W_IX(i, j+1, k)]
-                );
+                    float u_vel = 0.25f * (
+                        u_old[U_IX(i-1, j, k)] + u_old[U_IX(i, j, k)] +
+                        u_old[U_IX(i-1, j+1, k)] + u_old[U_IX(i, j+1, k)]
+                    );
+                    float v_vel = v_old[V_IX(i, j, k)];
+                    float w_vel = 0.25f * (
+                        w_old[W_IX(i, j, k-1)] + w_old[W_IX(i, j, k)] +
+                        w_old[W_IX(i, j+1, k-1)] + w_old[W_IX(i, j+1, k)]
+                    );
 
-                float srcX = x - dt * N * u_vel;
-                float srcY = y - dt * N * v_vel;
-                float srcZ = z - dt * N * w_vel;
+                    float srcX = x - dt * u_vel* inv_h;
+                    float srcY = y - dt * v_vel* inv_h;
+                    float srcZ = z - dt * w_vel* inv_h;
 
-                v[V_IX(i, j, k)] = interpolate_v_old(srcX, srcY, srcZ);
+                    v[V_IX(i, j, k)] = interpolate_v_old(srcX, srcY, srcZ);
+                }
             }
         }
-    }
-    set_bnd_with_sphere(2, v, N+2, N+1, N+2);
+        set_bnd_with_sphere(2, v, N+2, N+1, N+2);
 
-    // Advect w (z-faces)
-    for (int k = 0; k <= N; k++) {
-        for (int j = 1; j <= N; j++) {
-            for (int i = 1; i <= N; i++) {
-                float x = (float)i + 0.5f;
-                float y = (float)j + 0.5f;
-                float z = (float)k + 0.5f;
+        // Advect w (z-faces)
+        for (int k = 0; k <= N; k++) {
+            for (int j = 1; j <= N; j++) {
+                for (int i = 1; i <= N; i++) {
+                    float x = (float)i + 0.5f;
+                    float y = (float)j + 0.5f;
+                    float z = (float)k + 0.5f;
 
-                float u_vel = 0.25f * (
-                    u_old[U_IX(i-1, j, k)] + u_old[U_IX(i, j, k)] +
-                    u_old[U_IX(i-1, j, k+1)] + u_old[U_IX(i, j, k+1)]
-                );
-                float v_vel = 0.25f * (
-                    v_old[V_IX(i, j-1, k)] + v_old[V_IX(i, j, k)] +
-                    v_old[V_IX(i, j-1, k+1)] + v_old[V_IX(i, j, k+1)]
-                );
-                float w_vel = w_old[W_IX(i, j, k)];
+                    float u_vel = 0.25f * (
+                        u_old[U_IX(i-1, j, k)] + u_old[U_IX(i, j, k)] +
+                        u_old[U_IX(i-1, j, k+1)] + u_old[U_IX(i, j, k+1)]
+                    );
+                    float v_vel = 0.25f * (
+                        v_old[V_IX(i, j-1, k)] + v_old[V_IX(i, j, k)] +
+                        v_old[V_IX(i, j-1, k+1)] + v_old[V_IX(i, j, k+1)]
+                    );
+                    float w_vel = w_old[W_IX(i, j, k)];
 
-                float srcX = x - dt * N * u_vel;
-                float srcY = y - dt * N * v_vel;
-                float srcZ = z - dt * N * w_vel;
+                    float srcX = x - dt * u_vel* inv_h;
+                    float srcY = y - dt * v_vel* inv_h;
+                    float srcZ = z - dt * w_vel* inv_h;
 
-                w[W_IX(i, j, k)] = interpolate_w_old(srcX, srcY, srcZ);
+                    w[W_IX(i, j, k)] = interpolate_w_old(srcX, srcY, srcZ);
+                }
             }
         }
+        set_bnd_with_sphere(3, w, N+2, N+2, N+1);
     }
-    set_bnd_with_sphere(3, w, N+2, N+2, N+1);
-}
 
     void advect_density(float dt) {
         // Save current density to old array
@@ -825,9 +829,9 @@ private:
                     float w_vel = vel[2];
 
                     // Backtrack to find source position
-                    float srcX = x - dt * N * u_vel;  // Multiply by N to convert to grid units
-                    float srcY = y - dt * N * v_vel;
-                    float srcZ = z - dt * N * w_vel;
+                    float srcX = x - dt * u_vel* inv_h;
+                    float srcY = y - dt * v_vel* inv_h;
+                    float srcZ = z - dt * w_vel* inv_h;
 
                     // Clamp to grid boundaries
                     srcX = std::max(0.5f, std::min((float)N + 0.5f, srcX));
@@ -843,109 +847,109 @@ private:
     }
 
     void diffuse_velocity(float dt) {
-    if (visc <= 0.0f) return;
+        if (visc <= 0.0f) return;
 
-    float a = dt * visc * N * N;
+        float a = dt * visc * inv_h * inv_h;
 
-    // FIRST: Save the current velocities (which are AFTER advection)
-    // These become the right-hand side of the linear system
-    std::vector<float> u_rhs = u;  // w2 in paper
-    std::vector<float> v_rhs = v;
-    std::vector<float> w_rhs = w;
+        // FIRST: Save the current velocities (which are AFTER advection)
+        // These become the right-hand side of the linear system
+        std::vector<float> u_rhs = u;  // w2 in paper
+        std::vector<float> v_rhs = v;
+        std::vector<float> w_rhs = w;
 
-    // Work arrays for Gauss-Seidel
-    std::vector<float> u_new = u;
-    std::vector<float> v_new = v;
-    std::vector<float> w_new = w;
+        // Work arrays for Gauss-Seidel
+        std::vector<float> u_new = u;
+        std::vector<float> v_new = v;
+        std::vector<float> w_new = w;
 
-    // Solve diffusion for u using Gauss-Seidel
-    for (int iter = 0; iter < 20; iter++) {
-        for (int k = 1; k <= N; k++) {
-            for (int j = 1; j <= N; j++) {
-                for (int i = 0; i <= N; i++) {
-                    int idx = U_IX(i, j, k);
-                    float sum = 0.0f;
-                    int count = 0;
+        // Solve diffusion for u using Gauss-Seidel
+        for (int iter = 0; iter < 20; iter++) {
+            for (int k = 1; k <= N; k++) {
+                for (int j = 1; j <= N; j++) {
+                    for (int i = 0; i <= N; i++) {
+                        int idx = U_IX(i, j, k);
+                        float sum = 0.0f;
+                        int count = 0;
 
-                    // Use u_new (current iteration's values) for neighbors
-                    if (i > 0) { sum += u_new[U_IX(i-1, j, k)]; count++; }
-                    if (i < N) { sum += u_new[U_IX(i+1, j, k)]; count++; }
-                    if (j > 1) { sum += u_new[U_IX(i, j-1, k)]; count++; }
-                    if (j < N) { sum += u_new[U_IX(i, j+1, k)]; count++; }
-                    if (k > 1) { sum += u_new[U_IX(i, j, k-1)]; count++; }
-                    if (k < N) { sum += u_new[U_IX(i, j, k+1)]; count++; }
+                        // Use u_new (current iteration's values) for neighbors
+                        if (i > 0) { sum += u_new[U_IX(i-1, j, k)]; count++; }
+                        if (i < N) { sum += u_new[U_IX(i+1, j, k)]; count++; }
+                        if (j > 1) { sum += u_new[U_IX(i, j-1, k)]; count++; }
+                        if (j < N) { sum += u_new[U_IX(i, j+1, k)]; count++; }
+                        if (k > 1) { sum += u_new[U_IX(i, j, k-1)]; count++; }
+                        if (k < N) { sum += u_new[U_IX(i, j, k+1)]; count++; }
 
-                    if (count > 0) {
-                        // Use u_rhs (advected velocities) as right-hand side
-                        // Equation: (I - ν∆t∇²)u_new = u_rhs
-                        // Discretized: (1 + a*count)*u_new - a*sum = u_rhs
-                        // Rearranged: u_new = (u_rhs + a*sum) / (1 + a*count)
-                        u_new[idx] = (u_rhs[idx] + a * sum) / (1.0f + a * count);
+                        if (count > 0) {
+                            // Use u_rhs (advected velocities) as right-hand side
+                            // Equation: (I - ν∆t∇²)u_new = u_rhs
+                            // Discretized: (1 + a*count)*u_new - a*sum = u_rhs
+                            // Rearranged: u_new = (u_rhs + a*sum) / (1 + a*count)
+                            u_new[idx] = (u_rhs[idx] + a * sum) / (1.0f + a * count);
+                        }
                     }
                 }
             }
+            set_bnd_with_sphere(1, u_new, N+1, N+2, N+2);
         }
-        set_bnd_with_sphere(1, u_new, N+1, N+2, N+2);
-    }
-    u = std::move(u_new);
+        u = std::move(u_new);
 
-    // Solve for v (similar logic)
-    for (int iter = 0; iter < 20; iter++) {
-        for (int k = 1; k <= N; k++) {
-            for (int j = 0; j <= N; j++) {
-                for (int i = 1; i <= N; i++) {
-                    int idx = V_IX(i, j, k);
-                    float sum = 0.0f;
-                    int count = 0;
+        // Solve for v (similar logic)
+        for (int iter = 0; iter < 20; iter++) {
+            for (int k = 1; k <= N; k++) {
+                for (int j = 0; j <= N; j++) {
+                    for (int i = 1; i <= N; i++) {
+                        int idx = V_IX(i, j, k);
+                        float sum = 0.0f;
+                        int count = 0;
 
-                    if (i > 1) { sum += v_new[V_IX(i-1, j, k)]; count++; }
-                    if (i < N) { sum += v_new[V_IX(i+1, j, k)]; count++; }
-                    if (j > 0) { sum += v_new[V_IX(i, j-1, k)]; count++; }
-                    if (j < N) { sum += v_new[V_IX(i, j+1, k)]; count++; }
-                    if (k > 1) { sum += v_new[V_IX(i, j, k-1)]; count++; }
-                    if (k < N) { sum += v_new[V_IX(i, j, k+1)]; count++; }
+                        if (i > 1) { sum += v_new[V_IX(i-1, j, k)]; count++; }
+                        if (i < N) { sum += v_new[V_IX(i+1, j, k)]; count++; }
+                        if (j > 0) { sum += v_new[V_IX(i, j-1, k)]; count++; }
+                        if (j < N) { sum += v_new[V_IX(i, j+1, k)]; count++; }
+                        if (k > 1) { sum += v_new[V_IX(i, j, k-1)]; count++; }
+                        if (k < N) { sum += v_new[V_IX(i, j, k+1)]; count++; }
 
-                    if (count > 0) {
-                        v_new[idx] = (v_rhs[idx] + a * sum) / (1.0f + a * count);
+                        if (count > 0) {
+                            v_new[idx] = (v_rhs[idx] + a * sum) / (1.0f + a * count);
+                        }
                     }
                 }
             }
+            set_bnd_with_sphere(2, v_new, N+2, N+1, N+2);
         }
-        set_bnd_with_sphere(2, v_new, N+2, N+1, N+2);
-    }
-    v = std::move(v_new);
+        v = std::move(v_new);
 
-    // Solve for w (similar logic)
-    for (int iter = 0; iter < 20; iter++) {
-        for (int k = 0; k <= N; k++) {
-            for (int j = 1; j <= N; j++) {
-                for (int i = 1; i <= N; i++) {
-                    int idx = W_IX(i, j, k);
-                    float sum = 0.0f;
-                    int count = 0;
+        // Solve for w (similar logic)
+        for (int iter = 0; iter < 20; iter++) {
+            for (int k = 0; k <= N; k++) {
+                for (int j = 1; j <= N; j++) {
+                    for (int i = 1; i <= N; i++) {
+                        int idx = W_IX(i, j, k);
+                        float sum = 0.0f;
+                        int count = 0;
 
-                    if (i > 1) { sum += w_new[W_IX(i-1, j, k)]; count++; }
-                    if (i < N) { sum += w_new[W_IX(i+1, j, k)]; count++; }
-                    if (j > 1) { sum += w_new[W_IX(i, j-1, k)]; count++; }
-                    if (j < N) { sum += w_new[W_IX(i, j+1, k)]; count++; }
-                    if (k > 0) { sum += w_new[W_IX(i, j, k-1)]; count++; }
-                    if (k < N) { sum += w_new[W_IX(i, j, k+1)]; count++; }
+                        if (i > 1) { sum += w_new[W_IX(i-1, j, k)]; count++; }
+                        if (i < N) { sum += w_new[W_IX(i+1, j, k)]; count++; }
+                        if (j > 1) { sum += w_new[W_IX(i, j-1, k)]; count++; }
+                        if (j < N) { sum += w_new[W_IX(i, j+1, k)]; count++; }
+                        if (k > 0) { sum += w_new[W_IX(i, j, k-1)]; count++; }
+                        if (k < N) { sum += w_new[W_IX(i, j, k+1)]; count++; }
 
-                    if (count > 0) {
-                        w_new[idx] = (w_rhs[idx] + a * sum) / (1.0f + a * count);
+                        if (count > 0) {
+                            w_new[idx] = (w_rhs[idx] + a * sum) / (1.0f + a * count);
+                        }
                     }
                 }
             }
+            set_bnd_with_sphere(3, w_new, N+2, N+2, N+1);
         }
-        set_bnd_with_sphere(3, w_new, N+2, N+2, N+1);
+        w = std::move(w_new);
     }
-    w = std::move(w_new);
-}
 
     void diffuse_density(float dt) {
         if (diff <= 0.0f) return;
 
-        float a = dt * diff * N * N;
+        float a = dt * diff * inv_h * inv_h;
 
         // Save advected density as right-hand side
         std::vector<float> dens_rhs = dens;
@@ -983,7 +987,7 @@ private:
         float w_front = w[W_IX(i, j, k)];
         float w_back = w[W_IX(i, j, k-1)];
 
-        return (u_right - u_left) + (v_top - v_bottom) + (w_front - w_back);
+        return inv_h * ((u_right - u_left) + (v_top - v_bottom) + (w_front - w_back));
     }
 
     void project() {
@@ -1005,7 +1009,6 @@ private:
         }
         set_bnd_with_sphere(0, div, size, size, size);
 
-        std::cout << "[PROJECT] Max divergence before: " << max_div_before << std::endl;
 
         // 2. Solve Poisson equation: ∇²p = ∇·u
         // Actually, from paper: ∇²q = ∇·w3
@@ -1066,9 +1069,9 @@ private:
                                              p[P_IX(i, j-1, k)] + p[P_IX(i, j+1, k)] +
                                              p[P_IX(i, j, k-1)] + p[P_IX(i, j, k+1)];
 
-                        float rhs = div[idx];
+                        float rhs = div[P_IX(i, j, k)] * (h * h);
                         float p_new = (1.0f - omega) * p[idx] +
-                                     omega * (sum_neighbors - rhs) / 6.0f;
+                            omega * (sum_neighbors - rhs) / 6.0f;
 
                         float change = fabs(p_new - p[idx]);
                         if (change > max_change) max_change = change;
@@ -1108,15 +1111,16 @@ private:
         // Apply gradient: w4 = w3 - ∇p
         // Note: No dt scaling here! The pressure p already incorporates any scaling
         // from solving the Poisson equation
+        float h = 1.0f / N;
 
         for (int k = 1; k <= N; k++) {
             for (int j = 1; j <= N; j++) {
                 for (int i = 0; i <= N; i++) {
                     float p_right = p[P_IX(i+1, j, k)];
                     float p_left = p[P_IX(i, j, k)];
-                    float pressure_grad = p_right - p_left;
+                    float pressure_grad = (p_right - p_left) / h;
 
-                    u[U_IX(i, j, k)] -= pressure_grad;  // No dt scaling!
+                    u[U_IX(i, j, k)] -= pressure_grad;
                 }
             }
         }
@@ -1126,9 +1130,9 @@ private:
                 for (int i = 1; i <= N; i++) {
                     float p_top = p[P_IX(i, j+1, k)];
                     float p_bottom = p[P_IX(i, j, k)];
-                    float pressure_grad = p_top - p_bottom;
+                    float pressure_grad = (p_top - p_bottom)/ h;
 
-                    v[V_IX(i, j, k)] -= pressure_grad;  // No dt scaling!
+                    v[V_IX(i, j, k)] -= pressure_grad;
                 }
             }
         }
@@ -1138,9 +1142,9 @@ private:
                 for (int i = 1; i <= N; i++) {
                     float p_front = p[P_IX(i, j, k+1)];
                     float p_back = p[P_IX(i, j, k)];
-                    float pressure_grad = p_front - p_back;
+                    float pressure_grad = (p_front - p_back) / h;
 
-                    w[W_IX(i, j, k)] -= pressure_grad;  // No dt scaling!
+                    w[W_IX(i, j, k)] -= pressure_grad;
                 }
             }
         }
@@ -1188,14 +1192,16 @@ private:
 
     void vel_step() {
         add_forces();
+        project();
+        //diffuse_velocity(dt);
         advect_velocity(dt);
-        diffuse_velocity(dt);
         project();
     }
 
     void dens_step() {
         advect_density(dt);
         diffuse_density(dt);
+        dissipate_density(dt, 0.32f);
     }
 
 

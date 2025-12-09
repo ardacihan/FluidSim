@@ -24,7 +24,7 @@ float DENSITY_ALPHA_SCALE = 0.8f;
 struct CameraState {
     float rotX = 30.0f;
     float rotY = -45.0f;
-    float distance = 15.0f;
+    float distance = 45.0f;
     ImVec2 lastMousePos;
     bool isDragging = false;
 };
@@ -599,7 +599,7 @@ void UI::renderImGui(Grid3D& grid, SimulationState& state, CameraState& camera) 
     ImGui::Checkbox("Show Velocity Vectors", &state.showVelocityVectors);
 
     if (state.showVelocityVectors) {
-        ImGui::SliderFloat("Vector Scale", &state.vectorScale, 0.1f, 10.0f);
+        ImGui::SliderFloat("Vector Scale", &state.vectorScale, 0.1f, 20.0f);
         ImGui::SliderInt("Vector Skip", &state.vectorSkip, 1, 5);
         ImGui::SliderFloat("Min Velocity", &state.minVelocityThreshold, 0.0f, 1.0f);
     }
