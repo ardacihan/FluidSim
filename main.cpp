@@ -25,21 +25,21 @@ struct CameraState {
 };
 
 struct SimulationState {
-    float dt = 0.1f;
+    float dt = 0.01f;
     float diff = 0.0001f;
     float visc = 0.0001f;
     bool isRunning = false;
     bool showDivergence = false;
-    bool showVelocityVectors = true;
-    bool showInterpolationVectors = false;
-    float vectorScale = 2.0f;
-    int vectorSkip = 2; // Show every Nth vector
+    bool showVelocityVectors = false;
+    bool showInterpolationVectors = true;
+    float vectorScale = 3.0f;
+    int vectorSkip = 1; // Show every Nth vector
     float minVelocityThreshold = 0.01f;
-    float interpolationOffset = 0.5f; // Offset for interpolation test points
-    int interpolationSubdivisions = 2; // Number of interpolation points between grid cells
-    bool showSingleLayer = false;       // Toggle single layer view
-    int visibleLayer = 0;               // Which layer to show (0 to N-1)
-    int layerAxis = 2;                  // 0=X, 1=Y, 2=Z (which axis to slice along)
+    float interpolationOffset = 0.0f; // Offset for interpolation test points
+    int interpolationSubdivisions = 3; // Number of interpolation points between grid cells
+    bool showSingleLayer = true;       // Toggle single layer view
+    int visibleLayer = 7;               // Which layer to show (0 to N-1)
+    int layerAxis = 1 ;                  // 0=X, 1=Y, 2=Z (which axis to slice along)
 };
 
 // --- Forward Declarations ---
@@ -556,20 +556,6 @@ void UI::renderImGui(Grid3D& grid, SimulationState& state, CameraState& camera) 
     ImGui::Checkbox("Show Grid Velocities", &state.showVelocityVectors);
     ImGui::Checkbox("Show Interpolated Velocities", &state.showInterpolationVectors);
 
-    if (state.showVelocityVectors || state.showInterpolationVectors) {
-        ImGui::SliderFloat("Vector Scale", &state.vectorScale, 0.1f, 10.0f);
-        ImGui::SliderInt("Vector Skip", &state.vectorSkip, 1, 8);
-        ImGui::SliderFloat("Min Velocity", &state.minVelocityThreshold, 0.0f, 1.0f);
-    }
-
-    if (state.showInterpolationVectors) {
-        ImGui::SliderFloat("Interp Offset", &state.interpolationOffset, 0.1f, 0.9f);
-        ImGui::SliderInt("Subdivisions", &state.interpolationSubdivisions, 0, 10);
-        ImGui::Text("Cyan/Yellow = Grid data");
-        ImGui::Text("Magenta = Interpolated (single)");
-        ImGui::Text("Light Magenta = Interpolated (subdivided)");
-    }
-
     // Velocity controls
     ImGui::Separator();
     ImGui::Text("Velocity Initialization (Staggered Grid):");
@@ -621,19 +607,13 @@ void UI::renderImGui(Grid3D& grid, SimulationState& state, CameraState& camera) 
         ImGui::RadioButton("Z Axis", &state.layerAxis, 2);
     }
 
-    // Simulation parameters
-    ImGui::Separator();
-    ImGui::Text("Parameters:");
-    ImGui::SliderFloat("Viscosity", &state.visc, 0.0f, 0.001f, "%.5f");
-    ImGui::SliderFloat("Diffusion", &state.diff, 0.0f, 0.001f, "%.5f");
-    ImGui::SliderFloat("Time Step", &state.dt, 0.0f, 0.5f);
 
     // Camera controls
     ImGui::Separator();
     ImGui::Text("Camera:");
     ImGui::SliderFloat("Rotation X", &camera.rotX, -180.0f, 180.0f);
     ImGui::SliderFloat("Rotation Y", &camera.rotY, -180.0f, 180.0f);
-    ImGui::SliderFloat("Distance", &camera.distance, 10.0f, 200.0f);
+    ImGui::SliderFloat("Distance", &camera.distance, 1.0f, 200.0f);
 
     // Divergence status
     ImGui::Separator();
