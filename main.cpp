@@ -346,10 +346,10 @@ void Graphics::setupCamera(const CameraState& camera) {
 void Graphics::renderScene(Grid3D& grid, const SimulationState& state) {
     // Draw Grid Boundary
     drawWireframeBox((float)GRID_SIZE);
-    drawSolidSphere(grid.sphere_x - 1.0f, grid.sphere_y - 1.0f, grid.sphere_z - 1.0f,
-                       grid.sphere_radius, 20);
-    drawWireframeSphere(grid.sphere_x - 1.0f, grid.sphere_y - 1.0f, grid.sphere_z - 1.0f,
-                          grid.sphere_radius, 12);
+   // drawSolidSphere(grid.sphere_x - 1.0f, grid.sphere_y - 1.0f, grid.sphere_z - 1.0f,
+   //                    grid.sphere_radius, 20);
+    //drawWireframeSphere(grid.sphere_x - 1.0f, grid.sphere_y - 1.0f, grid.sphere_z - 1.0f,
+    //                      grid.sphere_radius, 12);
 
     // Draw Voxels
     if (state.showSingleLayer) {
