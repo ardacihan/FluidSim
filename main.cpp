@@ -10,7 +10,7 @@
 
 // --- Configuration ---
 
-int GRID_SIZE = 32;
+int GRID_SIZE = 256;
 int WINDOW_WIDTH = 1280;
 int WINDOW_HEIGHT = 720;
 
@@ -24,7 +24,7 @@ float DENSITY_ALPHA_SCALE = 0.8f;
 struct CameraState {
     float rotX = 30.0f;
     float rotY = -45.0f;
-    float distance = 45.0f;
+    float distance = 600.0f;
     ImVec2 lastMousePos;
     bool isDragging = false;
 };
@@ -514,7 +514,6 @@ void Input::handleCameraInput(CameraState& camera) {
 
         camera.distance -= ImGui::GetIO().MouseWheel * 5.0f;
         if (camera.distance < 5.0f) camera.distance = 5.0f;
-        if (camera.distance > 100.0f) camera.distance = 100.0f;
     }
 }
 
@@ -639,7 +638,7 @@ void UI::renderImGui(Grid3D& grid, SimulationState& state, CameraState& camera) 
     ImGui::Text("Camera:");
     ImGui::SliderFloat("Rotation X", &camera.rotX, -180.0f, 180.0f);
     ImGui::SliderFloat("Rotation Y", &camera.rotY, -180.0f, 180.0f);
-    ImGui::SliderFloat("Distance", &camera.distance, 5.0f, 100.0f);
+    ImGui::SliderFloat("Distance", &camera.distance, 5.0f, 500.0f);
 
     if (ImGui::Button("Reset Camera")) {
         camera.rotX = 30.0f;
@@ -799,7 +798,7 @@ void App::shutdown(GLFWwindow* window) {
 }
 
 // --- Main Function ---
-int main() {
+int main2() {
     // Initialize window
     GLFWwindow* window = App::initializeWindow();
     if (!window) {

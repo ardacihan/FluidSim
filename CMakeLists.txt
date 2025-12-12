@@ -51,6 +51,8 @@ add_executable(FluidSim
         ${IMGUI_SOURCES}
         ${GLEW_SOURCES}
         Grid3D.cpp
+        main2d.cpp
+        main2d.h
 )
 
 # Link libraries
