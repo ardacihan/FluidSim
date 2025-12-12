@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <iostream>
+#include <omp.h>
 
 class Grid3D {
 public:
@@ -365,6 +366,7 @@ private:
         std::copy(w.begin(), w.end(), w_old.begin());
 
         // Advect u velocities (x-component)
+        #pragma omp parallel for collapse(3)
         for (int k = 1; k <= N; k++) {
             for (int j = 1; j <= N; j++) {
                 for (int i = 0; i <= N; i++) {
@@ -384,7 +386,7 @@ private:
                         w_old[W_IX(i+1, j, k-1)] + w_old[W_IX(i+1, j, k)]
                     );
 
-                    // Backtrace (RK2 methodr)
+                    // Backtrace (RK2 method)
                     float half_dt = 0.5f * dt;
 
                     // First evaluation at current position
@@ -414,6 +416,7 @@ private:
         }
 
         // Advect v velocities (y-component)
+        #pragma omp parallel for collapse(3)
         for (int k = 1; k <= N; k++) {
             for (int j = 0; j <= N; j++) {
                 for (int i = 1; i <= N; i++) {
@@ -455,6 +458,7 @@ private:
         }
 
         // Advect w velocities (z-component)
+        #pragma omp parallel for collapse(3)
         for (int k = 0; k <= N; k++) {
             for (int j = 1; j <= N; j++) {
                 for (int i = 1; i <= N; i++) {
@@ -505,6 +509,7 @@ private:
         // Save current density to old array
         std::copy(dens.begin(), dens.end(), dens_old.begin());
 
+        #pragma omp parallel for collapse(3)
         for (int k = 1; k <= N; k++) {
             for (int j = 1; j <= N; j++) {
                 for (int i = 1; i <= N; i++) {
@@ -520,9 +525,9 @@ private:
                     float w_vel = vel[2];
 
                     // Backtrack to find source position
-                    float srcX = x - dt * u_vel* inv_h;
-                    float srcY = y - dt * v_vel* inv_h;
-                    float srcZ = z - dt * w_vel* inv_h;
+                    float srcX = x - dt * u_vel * inv_h;
+                    float srcY = y - dt * v_vel * inv_h;
+                    float srcZ = z - dt * w_vel * inv_h;
 
                     // Clamp to grid boundaries
                     srcX = std::max(0.5f, std::min((float)N + 0.5f, srcX));
@@ -542,8 +547,8 @@ private:
 
         float a = dt * visc * inv_h * inv_h;
 
-        // FIRST: Save the current velocities (which are AFTER advection)
-        std::vector<float> u_rhs = u;  // w2 in paper
+        // Save the current velocities (which are AFTER advection)
+        std::vector<float> u_rhs = u;
         std::vector<float> v_rhs = v;
         std::vector<float> w_rhs = w;
 
@@ -552,29 +557,53 @@ private:
         std::vector<float> v_new = v;
         std::vector<float> w_new = w;
 
-        // Solve diffusion for u using Gauss-Seidel
+        // Solve diffusion for u using Gauss-Seidel with red-black ordering
         for (int iter = 0; iter < 10; iter++) {
+            // Red cells (where i+j+k is even)
+            #pragma omp parallel for collapse(3)
             for (int k = 1; k <= N; k++) {
                 for (int j = 1; j <= N; j++) {
                     for (int i = 0; i <= N; i++) {
-                        int idx = U_IX(i, j, k);
-                        float sum = 0.0f;
-                        int count = 0;
+                        if ((i + j + k) % 2 == 0) {
+                            int idx = U_IX(i, j, k);
+                            float sum = 0.0f;
+                            int count = 0;
 
-                        // Use u_new (current iteration's values) for neighbors
-                        if (i > 0) { sum += u_new[U_IX(i-1, j, k)]; count++; }
-                        if (i < N) { sum += u_new[U_IX(i+1, j, k)]; count++; }
-                        if (j > 1) { sum += u_new[U_IX(i, j-1, k)]; count++; }
-                        if (j < N) { sum += u_new[U_IX(i, j+1, k)]; count++; }
-                        if (k > 1) { sum += u_new[U_IX(i, j, k-1)]; count++; }
-                        if (k < N) { sum += u_new[U_IX(i, j, k+1)]; count++; }
+                            if (i > 0) { sum += u_new[U_IX(i-1, j, k)]; count++; }
+                            if (i < N) { sum += u_new[U_IX(i+1, j, k)]; count++; }
+                            if (j > 1) { sum += u_new[U_IX(i, j-1, k)]; count++; }
+                            if (j < N) { sum += u_new[U_IX(i, j+1, k)]; count++; }
+                            if (k > 1) { sum += u_new[U_IX(i, j, k-1)]; count++; }
+                            if (k < N) { sum += u_new[U_IX(i, j, k+1)]; count++; }
 
-                        if (count > 0) {
-                            // Use u_rhs (advected velocities) as right-hand side
-                            // Equation: (I - ν∆t∇²)u_new = u_rhs
-                            // Discretized: (1 + a*count)*u_new - a*sum = u_rhs
-                            // Rearranged: u_new = (u_rhs + a*sum) / (1 + a*count)
-                            u_new[idx] = (u_rhs[idx] + a * sum) / (1.0f + a * count);
+                            if (count > 0) {
+                                u_new[idx] = (u_rhs[idx] + a * sum) / (1.0f + a * count);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Black cells (where i+j+k is odd)
+            #pragma omp parallel for collapse(3)
+            for (int k = 1; k <= N; k++) {
+                for (int j = 1; j <= N; j++) {
+                    for (int i = 0; i <= N; i++) {
+                        if ((i + j + k) % 2 == 1) {
+                            int idx = U_IX(i, j, k);
+                            float sum = 0.0f;
+                            int count = 0;
+
+                            if (i > 0) { sum += u_new[U_IX(i-1, j, k)]; count++; }
+                            if (i < N) { sum += u_new[U_IX(i+1, j, k)]; count++; }
+                            if (j > 1) { sum += u_new[U_IX(i, j-1, k)]; count++; }
+                            if (j < N) { sum += u_new[U_IX(i, j+1, k)]; count++; }
+                            if (k > 1) { sum += u_new[U_IX(i, j, k-1)]; count++; }
+                            if (k < N) { sum += u_new[U_IX(i, j, k+1)]; count++; }
+
+                            if (count > 0) {
+                                u_new[idx] = (u_rhs[idx] + a * sum) / (1.0f + a * count);
+                            }
                         }
                     }
                 }
@@ -583,24 +612,53 @@ private:
         }
         u = std::move(u_new);
 
-        // Solve for v (similar logic)
-        for (int iter = 0; iter < 20; iter++) {
+        // Solve for v with red-black ordering
+        for (int iter = 0; iter < 10; iter++) {
+            // Red cells
+            #pragma omp parallel for collapse(3)
             for (int k = 1; k <= N; k++) {
                 for (int j = 0; j <= N; j++) {
                     for (int i = 1; i <= N; i++) {
-                        int idx = V_IX(i, j, k);
-                        float sum = 0.0f;
-                        int count = 0;
+                        if ((i + j + k) % 2 == 0) {
+                            int idx = V_IX(i, j, k);
+                            float sum = 0.0f;
+                            int count = 0;
 
-                        if (i > 1) { sum += v_new[V_IX(i-1, j, k)]; count++; }
-                        if (i < N) { sum += v_new[V_IX(i+1, j, k)]; count++; }
-                        if (j > 0) { sum += v_new[V_IX(i, j-1, k)]; count++; }
-                        if (j < N) { sum += v_new[V_IX(i, j+1, k)]; count++; }
-                        if (k > 1) { sum += v_new[V_IX(i, j, k-1)]; count++; }
-                        if (k < N) { sum += v_new[V_IX(i, j, k+1)]; count++; }
+                            if (i > 1) { sum += v_new[V_IX(i-1, j, k)]; count++; }
+                            if (i < N) { sum += v_new[V_IX(i+1, j, k)]; count++; }
+                            if (j > 0) { sum += v_new[V_IX(i, j-1, k)]; count++; }
+                            if (j < N) { sum += v_new[V_IX(i, j+1, k)]; count++; }
+                            if (k > 1) { sum += v_new[V_IX(i, j, k-1)]; count++; }
+                            if (k < N) { sum += v_new[V_IX(i, j, k+1)]; count++; }
 
-                        if (count > 0) {
-                            v_new[idx] = (v_rhs[idx] + a * sum) / (1.0f + a * count);
+                            if (count > 0) {
+                                v_new[idx] = (v_rhs[idx] + a * sum) / (1.0f + a * count);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Black cells
+            #pragma omp parallel for collapse(3)
+            for (int k = 1; k <= N; k++) {
+                for (int j = 0; j <= N; j++) {
+                    for (int i = 1; i <= N; i++) {
+                        if ((i + j + k) % 2 == 1) {
+                            int idx = V_IX(i, j, k);
+                            float sum = 0.0f;
+                            int count = 0;
+
+                            if (i > 1) { sum += v_new[V_IX(i-1, j, k)]; count++; }
+                            if (i < N) { sum += v_new[V_IX(i+1, j, k)]; count++; }
+                            if (j > 0) { sum += v_new[V_IX(i, j-1, k)]; count++; }
+                            if (j < N) { sum += v_new[V_IX(i, j+1, k)]; count++; }
+                            if (k > 1) { sum += v_new[V_IX(i, j, k-1)]; count++; }
+                            if (k < N) { sum += v_new[V_IX(i, j, k+1)]; count++; }
+
+                            if (count > 0) {
+                                v_new[idx] = (v_rhs[idx] + a * sum) / (1.0f + a * count);
+                            }
                         }
                     }
                 }
@@ -609,24 +667,53 @@ private:
         }
         v = std::move(v_new);
 
-        // Solve for w (similar logic)
-        for (int iter = 0; iter < 20; iter++) {
+        // Solve for w with red-black ordering
+        for (int iter = 0; iter < 10; iter++) {
+            // Red cells
+            #pragma omp parallel for collapse(3)
             for (int k = 0; k <= N; k++) {
                 for (int j = 1; j <= N; j++) {
                     for (int i = 1; i <= N; i++) {
-                        int idx = W_IX(i, j, k);
-                        float sum = 0.0f;
-                        int count = 0;
+                        if ((i + j + k) % 2 == 0) {
+                            int idx = W_IX(i, j, k);
+                            float sum = 0.0f;
+                            int count = 0;
 
-                        if (i > 1) { sum += w_new[W_IX(i-1, j, k)]; count++; }
-                        if (i < N) { sum += w_new[W_IX(i+1, j, k)]; count++; }
-                        if (j > 1) { sum += w_new[W_IX(i, j-1, k)]; count++; }
-                        if (j < N) { sum += w_new[W_IX(i, j+1, k)]; count++; }
-                        if (k > 0) { sum += w_new[W_IX(i, j, k-1)]; count++; }
-                        if (k < N) { sum += w_new[W_IX(i, j, k+1)]; count++; }
+                            if (i > 1) { sum += w_new[W_IX(i-1, j, k)]; count++; }
+                            if (i < N) { sum += w_new[W_IX(i+1, j, k)]; count++; }
+                            if (j > 1) { sum += w_new[W_IX(i, j-1, k)]; count++; }
+                            if (j < N) { sum += w_new[W_IX(i, j+1, k)]; count++; }
+                            if (k > 0) { sum += w_new[W_IX(i, j, k-1)]; count++; }
+                            if (k < N) { sum += w_new[W_IX(i, j, k+1)]; count++; }
 
-                        if (count > 0) {
-                            w_new[idx] = (w_rhs[idx] + a * sum) / (1.0f + a * count);
+                            if (count > 0) {
+                                w_new[idx] = (w_rhs[idx] + a * sum) / (1.0f + a * count);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Black cells
+            #pragma omp parallel for collapse(3)
+            for (int k = 0; k <= N; k++) {
+                for (int j = 1; j <= N; j++) {
+                    for (int i = 1; i <= N; i++) {
+                        if ((i + j + k) % 2 == 1) {
+                            int idx = W_IX(i, j, k);
+                            float sum = 0.0f;
+                            int count = 0;
+
+                            if (i > 1) { sum += w_new[W_IX(i-1, j, k)]; count++; }
+                            if (i < N) { sum += w_new[W_IX(i+1, j, k)]; count++; }
+                            if (j > 1) { sum += w_new[W_IX(i, j-1, k)]; count++; }
+                            if (j < N) { sum += w_new[W_IX(i, j+1, k)]; count++; }
+                            if (k > 0) { sum += w_new[W_IX(i, j, k-1)]; count++; }
+                            if (k < N) { sum += w_new[W_IX(i, j, k+1)]; count++; }
+
+                            if (count > 0) {
+                                w_new[idx] = (w_rhs[idx] + a * sum) / (1.0f + a * count);
+                            }
                         }
                     }
                 }
@@ -646,17 +733,36 @@ private:
         std::vector<float> dens_new = dens;
 
         for (int iter = 0; iter < 20; iter++) {
+            // Red cells
+            #pragma omp parallel for collapse(3)
             for (int k = 1; k <= N; k++) {
                 for (int j = 1; j <= N; j++) {
                     for (int i = 1; i <= N; i++) {
-                        int idx = P_IX(i, j, k);
-                        // Use dens_new for neighbors (Gauss-Seidel)
-                        float sum = dens_new[P_IX(i-1, j, k)] + dens_new[P_IX(i+1, j, k)] +
-                                    dens_new[P_IX(i, j-1, k)] + dens_new[P_IX(i, j+1, k)] +
-                                    dens_new[P_IX(i, j, k-1)] + dens_new[P_IX(i, j, k+1)];
+                        if ((i + j + k) % 2 == 0) {
+                            int idx = P_IX(i, j, k);
+                            float sum = dens_new[P_IX(i-1, j, k)] + dens_new[P_IX(i+1, j, k)] +
+                                        dens_new[P_IX(i, j-1, k)] + dens_new[P_IX(i, j+1, k)] +
+                                        dens_new[P_IX(i, j, k-1)] + dens_new[P_IX(i, j, k+1)];
 
-                        // Use dens_rhs (advected density) as right-hand side
-                        dens_new[idx] = (dens_rhs[idx] + a * sum) / (1 + 6 * a);
+                            dens_new[idx] = (dens_rhs[idx] + a * sum) / (1 + 6 * a);
+                        }
+                    }
+                }
+            }
+
+            // Black cells
+            #pragma omp parallel for collapse(3)
+            for (int k = 1; k <= N; k++) {
+                for (int j = 1; j <= N; j++) {
+                    for (int i = 1; i <= N; i++) {
+                        if ((i + j + k) % 2 == 1) {
+                            int idx = P_IX(i, j, k);
+                            float sum = dens_new[P_IX(i-1, j, k)] + dens_new[P_IX(i+1, j, k)] +
+                                        dens_new[P_IX(i, j-1, k)] + dens_new[P_IX(i, j+1, k)] +
+                                        dens_new[P_IX(i, j, k-1)] + dens_new[P_IX(i, j, k+1)];
+
+                            dens_new[idx] = (dens_rhs[idx] + a * sum) / (1 + 6 * a);
+                        }
                     }
                 }
             }
@@ -685,6 +791,7 @@ private:
         std::vector<float> pressure((N+2)*(N+2)*(N+2), 0.0f);
 
         // 1. Compute divergence at each cell center
+        #pragma omp parallel for collapse(3)
         for (int k = 1; k <= N; k++) {
             for (int j = 1; j <= N; j++) {
                 for (int i = 1; i <= N; i++) {
@@ -709,20 +816,42 @@ private:
         int num_iterations = 10;
         float sor_factor = 1.9f;
 
+        // Solve Poisson equation with red-black ordering
         for (int iter = 0; iter < num_iterations; iter++) {
+            // Red cells
+            #pragma omp parallel for collapse(3)
             for (int k = 1; k <= N; k++) {
                 for (int j = 1; j <= N; j++) {
                     for (int i = 1; i <= N; i++) {
-                        int idx = P_IX(i, j, k);
+                        if ((i + j + k) % 2 == 0) {
+                            int idx = P_IX(i, j, k);
 
-                        // Sum of neighbor pressures
-                        float p_sum = pressure[P_IX(i-1, j, k)] + pressure[P_IX(i+1, j, k)] +
-                                      pressure[P_IX(i, j-1, k)] + pressure[P_IX(i, j+1, k)] +
-                                      pressure[P_IX(i, j, k-1)] + pressure[P_IX(i, j, k+1)];
+                            float p_sum = pressure[P_IX(i-1, j, k)] + pressure[P_IX(i+1, j, k)] +
+                                          pressure[P_IX(i, j-1, k)] + pressure[P_IX(i, j+1, k)] +
+                                          pressure[P_IX(i, j, k-1)] + pressure[P_IX(i, j, k+1)];
 
-                        float new_p = (p_sum - h_squared * div[idx] / dt) / 6.0f;
+                            float new_p = (p_sum - h_squared * div[idx]) / 6.0f;
+                            pressure[idx] = pressure[idx] + sor_factor * (new_p - pressure[idx]);
+                        }
+                    }
+                }
+            }
 
-                        pressure[idx] = pressure[idx] + sor_factor * (new_p - pressure[idx]);
+            // Black cells
+            #pragma omp parallel for collapse(3)
+            for (int k = 1; k <= N; k++) {
+                for (int j = 1; j <= N; j++) {
+                    for (int i = 1; i <= N; i++) {
+                        if ((i + j + k) % 2 == 1) {
+                            int idx = P_IX(i, j, k);
+
+                            float p_sum = pressure[P_IX(i-1, j, k)] + pressure[P_IX(i+1, j, k)] +
+                                          pressure[P_IX(i, j-1, k)] + pressure[P_IX(i, j+1, k)] +
+                                          pressure[P_IX(i, j, k-1)] + pressure[P_IX(i, j, k+1)];
+
+                            float new_p = (p_sum - h_squared * div[idx]) / 6.0f;
+                            pressure[idx] = pressure[idx] + sor_factor * (new_p - pressure[idx]);
+                        }
                     }
                 }
             }
@@ -730,11 +859,11 @@ private:
             set_bnd(0, pressure, N+2, N+2, N+2);
         }
 
-
         // Update u velocities
+        #pragma omp parallel for collapse(3)
         for (int k = 1; k <= N; k++) {
             for (int j = 1; j <= N; j++) {
-                for (int i = 1; i <= N-1; i++) {  // i goes to N-1 for u (N faces in x)
+                for (int i = 1; i <= N-1; i++) {
                     float p_right = pressure[P_IX(i+1, j, k)];
                     float p_left = pressure[P_IX(i, j, k)];
                     float pressure_grad = (p_right - p_left) * inv_h;
@@ -745,8 +874,9 @@ private:
         }
 
         // Update v velocities
+        #pragma omp parallel for collapse(3)
         for (int k = 1; k <= N; k++) {
-            for (int j = 1; j <= N-1; j++) {  // j goes to N-1 for v
+            for (int j = 1; j <= N-1; j++) {
                 for (int i = 1; i <= N; i++) {
                     float p_top = pressure[P_IX(i, j+1, k)];
                     float p_bottom = pressure[P_IX(i, j, k)];
@@ -758,7 +888,8 @@ private:
         }
 
         // Update w velocities
-        for (int k = 1; k <= N-1; k++) {  // k goes to N-1 for w
+        #pragma omp parallel for collapse(3)
+        for (int k = 1; k <= N-1; k++) {
             for (int j = 1; j <= N; j++) {
                 for (int i = 1; i <= N; i++) {
                     float p_front = pressure[P_IX(i, j, k+1)];
@@ -780,6 +911,8 @@ private:
 
         // DEBUG: Print max divergence to check if projection worked
         float max_div = 0.0f;
+
+        #pragma omp parallel for collapse(3) reduction(max:max_div)
         for (int k = 1; k <= N; k++) {
             for (int j = 1; j <= N; j++) {
                 for (int i = 1; i <= N; i++) {
@@ -792,78 +925,7 @@ private:
         }
     }
 
-    // Helper function for solid detection
-    bool is_solid_cell(int i, int j, int k) {
-        // For now, mark domain boundaries as solid
-        if (i <= 0 || i >= N+1 || j <= 0 || j >= N+1 || k <= 0 || k >= N+1) {
-            return true;
-        }
-
-        // Check if inside sphere (you need to implement your sphere check)
-        float x = (i - 0.5f) * h;
-        float y = (j - 0.5f) * h;
-        float z = (k - 0.5f) * h;
-
-        // Sphere at center with radius 0.2
-        float sphere_x = 0.5f, sphere_y = 0.5f, sphere_z = 0.5f;
-        float radius = 0.2f;
-        float dx = x - sphere_x;
-        float dy = y - sphere_y;
-        float dz = z - sphere_z;
-
-        return (dx*dx + dy*dy + dz*dz) <= (radius * radius);
-    }
-
-    void applyPressureGradient() {
-        // Apply gradient: w4 = w3 - ∇p
-        // Note: No dt scaling here! The pressure p already incorporates any scaling
-        // from solving the Poisson equation
-        float h = 1.0f / N;
-
-        for (int k = 1; k <= N; k++) {
-            for (int j = 1; j <= N; j++) {
-                for (int i = 0; i <= N; i++) {
-                    float p_right = p[P_IX(i+1, j, k)];
-                    float p_left = p[P_IX(i, j, k)];
-                    float pressure_grad = (p_right - p_left) / h;
-
-                    u[U_IX(i, j, k)] -= pressure_grad;
-                }
-            }
-        }
-
-        for (int k = 1; k <= N; k++) {
-            for (int j = 0; j <= N; j++) {
-                for (int i = 1; i <= N; i++) {
-                    float p_top = p[P_IX(i, j+1, k)];
-                    float p_bottom = p[P_IX(i, j, k)];
-                    float pressure_grad = (p_top - p_bottom)/ h;
-
-                    v[V_IX(i, j, k)] -= pressure_grad;
-                }
-            }
-        }
-
-        for (int k = 0; k <= N; k++) {
-            for (int j = 1; j <= N; j++) {
-                for (int i = 1; i <= N; i++) {
-                    float p_front = p[P_IX(i, j, k+1)];
-                    float p_back = p[P_IX(i, j, k)];
-                    float pressure_grad = (p_front - p_back) / h;
-
-                    w[W_IX(i, j, k)] -= pressure_grad;
-                }
-            }
-        }
-
-        // Apply boundary conditions
-        set_bnd(1, u, N+1, N+2, N+2);
-        set_bnd(2, v, N+2, N+1, N+2);
-        set_bnd(3, w, N+2, N+2, N+1);
-    }
-
     void dissipate_density(float dt, float alpha = 0.1f) {
-        // Dissipation: d_new = d_old / (1 + ∆tα)
         float factor = 1.0f / (1.0f + dt * alpha);
 
         for (int k = 1; k <= N; k++) {
