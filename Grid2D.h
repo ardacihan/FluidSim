@@ -34,6 +34,10 @@ public:
     std::vector<float> dens;
     std::vector<float> dens_old;
 
+    // NEW: Dye for visualization (separate from density)
+    std::vector<float> dye;
+    std::vector<float> dye_old;
+
     Grid2D(int size, float diffusion, float viscosity, float timestep)
         : N(size), diff(diffusion), visc(viscosity), dt(timestep)
     {
@@ -42,6 +46,10 @@ public:
         p.resize(cell_count, 0.0f);
         dens.resize(cell_count, 0.0f);
         dens_old.resize(cell_count, 0.0f);
+
+        // NEW: Dye arrays
+        dye.resize(cell_count, 0.0f);
+        dye_old.resize(cell_count, 0.0f);
 
         // u velocity: at x-faces (i+1/2, j)
         int u_count = (N + 1) * (N + 2);
@@ -76,6 +84,19 @@ public:
         dens[P_IX(i, j)] += amount;
     }
 
+    // NEW: Add dye at a specific location
+    void add_dye(int i, int j, float amount) {
+        dye[P_IX(i, j)] += amount;
+    }
+
+    // NEW: Add dye with RGB color
+    void add_dye(int i, int j, float r, float g, float b) {
+        // For now, store as grayscale average
+        // You can extend this to have separate RGB dye arrays if needed
+        float gray = (r + g + b) / 3.0f;
+        dye[P_IX(i, j)] += gray;
+    }
+
     void add_velocity(int i, int j, float amountU, float amountV) {
         // u component: average of two x-faces
         u[U_IX(i, j)] += amountU * 0.5f;
@@ -89,6 +110,7 @@ public:
     void step() {
         vel_step();
         dens_step();
+        dye_step(); // NEW: Advect dye separately
     }
 
     std::vector<float> getVelocityAtCellCenter(int i, int j) const { // helper function that uses staggered grid for accessing each cell
@@ -103,6 +125,12 @@ public:
         std::fill(v.begin(), v.end(), 0.0f);
         std::fill(u_old.begin(), u_old.end(), 0.0f);
         std::fill(v_old.begin(), v_old.end(), 0.0f);
+    }
+
+    // NEW: Clear dye
+    void clearAllDye() {
+        std::fill(dye.begin(), dye.end(), 0.0f);
+        std::fill(dye_old.begin(), dye_old.end(), 0.0f);
     }
 
     void initRandomStaggeredVelocities(float magnitude = 0.5f)  {
@@ -142,6 +170,26 @@ public:
                s*(1-t)*dens_old[P_IX(i+1, j)] +
                (1-s)*t*dens_old[P_IX(i, j+1)] +
                s*t*dens_old[P_IX(i+1, j+1)];
+    }
+
+    // NEW: Interpolate dye value
+    float interpolate_dye(float x, float y) const {
+        x = std::max(0.5f, std::min((float)N + 0.5f, x));
+        y = std::max(0.5f, std::min((float)N + 0.5f, y));
+
+        int i = (int)floor(x - 0.5f);
+        int j = (int)floor(y - 0.5f);
+
+        float s = (x - 0.5f) - i;
+        float t = (y - 0.5f) - j;
+
+        i = std::max(0, std::min(N+1, i));
+        j = std::max(0, std::min(N+1, j));
+
+        return (1-s)*(1-t)*dye_old[P_IX(i, j)] +
+               s*(1-t)*dye_old[P_IX(i+1, j)] +
+               (1-s)*t*dye_old[P_IX(i, j+1)] +
+               s*t*dye_old[P_IX(i+1, j+1)];
     }
 
     float interpolate_u_old(float x, float y) const {
@@ -356,6 +404,32 @@ private:
         set_bnd(0, dens, N+2, N+2);
     }
 
+    // NEW: Advect dye using semi-Lagrangian method
+    void advect_dye(float dt) {
+        std::copy(dye.begin(), dye.end(), dye_old.begin());
+
+        #pragma omp parallel for collapse(2)
+        for (int j = 1; j <= N; j++) {
+            for (int i = 1; i <= N; i++) {
+                float x = (float)i + 0.5f;
+                float y = (float)j + 0.5f;
+
+                auto vel = getVelocityAtCellCenter(i, j);
+                float u_vel = vel[0];
+                float v_vel = vel[1];
+
+                float srcX = x - dt * u_vel * inv_h;
+                float srcY = y - dt * v_vel * inv_h;
+
+                srcX = std::max(0.5f, std::min((float)N + 0.5f, srcX));
+                srcY = std::max(0.5f, std::min((float)N + 0.5f, srcY));
+
+                dye[P_IX(i, j)] = interpolate_dye(srcX, srcY);
+            }
+        }
+        set_bnd(0, dye, N+2, N+2);
+    }
+
     void diffuse_velocity(float dt) {
         if (visc <= 0.0f) return;
 
@@ -506,6 +580,43 @@ private:
         dens = std::move(dens_new);
     }
 
+    // NEW: Diffuse dye (optional, usually dye doesn't diffuse)
+    void diffuse_dye(float dt, float dye_diff = 0.0f) {
+        if (dye_diff <= 0.0f) return;
+
+        float a = dt * dye_diff * inv_h * inv_h;
+        std::vector<float> dye_rhs = dye;
+        std::vector<float> dye_new = dye;
+
+        for (int iter = 0; iter < 10; iter++) {
+            #pragma omp parallel for collapse(2)
+            for (int j = 1; j <= N; j++) {
+                for (int i = 1; i <= N; i++) {
+                    if ((i + j) % 2 == 0) {
+                        int idx = P_IX(i, j);
+                        float sum = dye_new[P_IX(i-1, j)] + dye_new[P_IX(i+1, j)] +
+                                    dye_new[P_IX(i, j-1)] + dye_new[P_IX(i, j+1)];
+                        dye_new[idx] = (dye_rhs[idx] + a * sum) / (1 + 4 * a);
+                    }
+                }
+            }
+
+            #pragma omp parallel for collapse(2)
+            for (int j = 1; j <= N; j++) {
+                for (int i = 1; i <= N; i++) {
+                    if ((i + j) % 2 == 1) {
+                        int idx = P_IX(i, j);
+                        float sum = dye_new[P_IX(i-1, j)] + dye_new[P_IX(i+1, j)] +
+                                    dye_new[P_IX(i, j-1)] + dye_new[P_IX(i, j+1)];
+                        dye_new[idx] = (dye_rhs[idx] + a * sum) / (1 + 4 * a);
+                    }
+                }
+            }
+            set_bnd(0, dye_new, N+2, N+2);
+        }
+        dye = std::move(dye_new);
+    }
+
     float computeDivergence(int i, int j) const {
         float u_right = u[U_IX(i, j)];
         float u_left = u[U_IX(i-1, j)];
@@ -636,6 +747,19 @@ private:
         set_bnd(0, dens, N+2, N+2);
     }
 
+    // NEW: Dissipate dye over time
+    void dissipate_dye(float dt, float alpha = 0.05f) {
+        float factor = 1.0f / (1.0f + dt * alpha);
+
+        for (int j = 1; j <= N; j++) {
+            for (int i = 1; i <= N; i++) {
+                int idx = P_IX(i, j);
+                dye[idx] *= factor;
+            }
+        }
+        set_bnd(0, dye, N+2, N+2);
+    }
+
     void add_forces() {
         int centerX = N / 2;
         int centerY = 2;
@@ -646,6 +770,7 @@ private:
             // Simple upward flow with slight horizontal variation
             add_velocity(i, centerY, -dx * 0.5f, 1.5f);
             add_density(i, centerY, 150.0f);
+            add_dye(i, centerY, 150.0f); // NEW: Add dye too
         }
     }
 
@@ -663,6 +788,14 @@ private:
         advect_density(dt);
         diffuse_density(dt);
         dissipate_density(dt, 0.32f);
+    }
+
+    // NEW: Dye step
+    void dye_step() {
+        advect_dye(dt);
+        // Usually dye doesn't diffuse, but you can enable it if needed:
+        // diffuse_dye(dt, 0.0001f);
+        dissipate_dye(dt, 0.05f); // Slow dissipation for nice trails
     }
 };
 

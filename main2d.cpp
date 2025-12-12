@@ -36,10 +36,11 @@ struct SimulationState_2D {
     // Visualization modes
     enum VisualizationMode {
         DENSITY,
-        PRESSURE
+        PRESSURE,
+        DYE
     };
 
-    VisualizationMode visMode = DENSITY;
+    VisualizationMode visMode = DYE;
 
     // Velocity vector overlay
     bool showVelocityVectors = false;
@@ -212,6 +213,31 @@ void Graphics_2D::drawCell(Grid2D& grid, const SimulationState_2D& state, int i,
             }
             break;
         }
+        case SimulationState_2D::DYE: {
+            float dye_val = grid.dye[grid.P_IX(i, j)];
+            if (dye_val > 0.5f) {
+                float normalized = std::min(dye_val / 100.0f, 1.0f);
+                alpha = std::min(normalized, 0.95f);
+
+                // Beautiful color gradient: blue -> cyan -> green -> yellow -> red
+                if (normalized < 0.25f) {
+                    float t = normalized * 4.0f;
+                    color = {0.0f, t, 1.0f, alpha};
+                } else if (normalized < 0.5f) {
+                    float t = (normalized - 0.25f) * 4.0f;
+                    color = {0.0f, 1.0f, 1.0f - t, alpha};
+                } else if (normalized < 0.75f) {
+                    float t = (normalized - 0.5f) * 4.0f;
+                    color = {t, 1.0f, 0.0f, alpha};
+                } else {
+                    float t = (normalized - 0.75f) * 4.0f;
+                    color = {1.0f, 1.0f - t, 0.0f, alpha};
+                }
+            } else {
+                return;
+            }
+            break;
+        }
     }
 
     drawSquare((float)i + 0.5f, (float)j + 0.5f, 0.9f,
@@ -314,7 +340,8 @@ void Input::handleMouseInteraction(GLFWwindow* window, Grid2D& grid, SimulationS
 
             // Add velocity and density at mouse position
             grid.add_velocity(gridX, gridY, velX, velY);
-            grid.add_density(gridX, gridY, 100.0f);
+            //grid.add_density(gridX, gridY, 100.0f);
+            grid.add_dye(gridX, gridY, 100.0f);  // Add dye instead of density
 
             state.lastInteractionPos = mousePos;
         }
@@ -375,6 +402,10 @@ void UI_2D::renderImGUI(Grid2D& grid, SimulationState_2D& state, CameraState_2D&
     if (ImGui::RadioButton("Pressure Field", state.visMode == SimulationState_2D::PRESSURE)) {
         state.visMode = SimulationState_2D::PRESSURE;
     }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Dye", state.visMode == SimulationState_2D::DYE)) {
+        state.visMode = SimulationState_2D::DYE;
+    }
 
     // Show color scheme info
     ImGui::Separator();
@@ -383,9 +414,12 @@ void UI_2D::renderImGUI(Grid2D& grid, SimulationState_2D& state, CameraState_2D&
         ImGui::TextColored(ImVec4(0, 0, 1, 1), "Blue: Low density");
         ImGui::TextColored(ImVec4(0, 1, 1, 1), "Cyan: Medium density");
         ImGui::TextColored(ImVec4(1, 1, 1, 1), "White: High density");
-    } else {
+    } else if (state.visMode == SimulationState_2D::PRESSURE) {
         ImGui::TextColored(ImVec4(1, 0, 0, 0.3f), "Transparent Red: Low pressure");
         ImGui::TextColored(ImVec4(1, 0, 0, 1.0f), "Opaque Red: High pressure");
+    } else {
+        ImGui::TextColored(ImVec4(0, 0, 1, 1), "Blue -> Cyan -> Green -> Yellow -> Red");
+        ImGui::Text("(Based on dye concentration)");
     }
 
     // Vector visualization
@@ -465,7 +499,7 @@ void UI_2D::renderImGUI(Grid2D& grid, SimulationState_2D& state, CameraState_2D&
     if (ImGui::Button("Reset Everything")) {
         grid = Grid2D(GRID_SIZE_2D, state.diff, state.visc, state.dt);
         state.isRunning = false;
-        state.visMode = SimulationState_2D::DENSITY;
+        state.visMode = SimulationState_2D::DYE;
     }
 
     ImGui::End();
