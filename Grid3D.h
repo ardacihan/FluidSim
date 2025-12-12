@@ -10,11 +10,6 @@
 
 class Grid3D {
 public:
-    float sphere_radius = 6.0f;
-    float sphere_x = 16.0f;
-    float sphere_y = 16.0f;
-    float sphere_z = 16.0f;
-
     int N; // Grid size (N x N x N) - number of pressure cells
     float dt;
     float diff;

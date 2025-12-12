@@ -2,33 +2,34 @@ cmake_minimum_required(VERSION 3.26)
 project(FluidSim)
 
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Set paths to your libraries
+# Paths
 set(GLFW_DIR ${CMAKE_CURRENT_SOURCE_DIR}/glfw-3.4)
 set(GLEW_DIR ${CMAKE_CURRENT_SOURCE_DIR}/glew-2.1.0)
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/imgui)
+set(Vulkan_INCLUDE_DIR "C:/VulkanSDK/1.4.335.0/Include")
+set(Vulkan_LIBRARY "C:/VulkanSDK/1.4.335.0/Lib/vulkan-1.lib")
 
-# First, check if GLFW has its own CMakeLists.txt
+# Build GLFW
 if(EXISTS ${GLFW_DIR}/CMakeLists.txt)
-    # Build GLFW as a subdirectory project
     set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
     set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
     set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
     add_subdirectory(${GLFW_DIR})
-
-    # GLFW target will be named 'glfw' or 'glfw3'
     set(GLFW_LIB glfw)
 else()
-    message(FATAL_ERROR "GLFW not found or doesn't have CMakeLists.txt. Please download GLFW from https://www.glfw.org/download.html")
+    message(FATAL_ERROR "GLFW not found")
 endif()
 
-# Include directories
+# Include dirs
 include_directories(
         ${GLFW_DIR}/include
         ${GLEW_DIR}/include
         ${IMGUI_DIR}
         ${IMGUI_DIR}/backends
-        ${CMAKE_CURRENT_SOURCE_DIR} # Include current dir for Grid3D.h
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${Vulkan_INCLUDE_DIR}
 )
 
 # ImGui sources
@@ -41,42 +42,36 @@ set(IMGUI_SOURCES
         ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
 )
 
-# GLEW sources - compile it directly
+# GLEW
 set(GLEW_SOURCES ${GLEW_DIR}/src/glew.c)
 add_definitions(-DGLEW_STATIC)
 
 # Executable
 add_executable(FluidSim
         main.cpp
-        ${IMGUI_SOURCES}
-        ${GLEW_SOURCES}
-        Grid3D.cpp
         main2d.cpp
         main2d.h
+        Grid2D.cpp
+        Grid2D.h
+        gpu_acc_functions/HWAcc.cpp
+        gpu_acc_functions/HWAcc.h
+        ${IMGUI_SOURCES}
+        ${GLEW_SOURCES}
 )
 
 # Link libraries
 target_link_libraries(FluidSim
-        ${GLFW_LIB}        # GLFW library
-        opengl32          # Windows OpenGL
-        glu32             # GLU utilities (optional)
-)
-
-# Additional Windows libraries needed by GLFW
-target_link_libraries(FluidSim
+        ${GLFW_LIB}
+        ${Vulkan_LIBRARY}
+        opengl32
+        glu32
         gdi32
         user32
         shell32
 )
 
-# For ImGui OpenGL 3 backend
+# ImGui OpenGL backend
 target_compile_definitions(FluidSim PRIVATE
         IMGUI_IMPL_OPENGL_LOADER_GLEW
         GLEW_STATIC
-)
-
-# Optional: Set properties for the target
-set_target_properties(FluidSim PROPERTIES
-        CXX_STANDARD 17
-        CXX_STANDARD_REQUIRED ON
 )

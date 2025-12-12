@@ -602,7 +602,7 @@ void App_2D::shutdown(GLFWwindow* window) {
 }
 
 // --- Main Function ---
-int main() {
+int main3() {
     // Initialize window
     GLFWwindow* window = App_2D::initializeWindow();
     if (!window) {
