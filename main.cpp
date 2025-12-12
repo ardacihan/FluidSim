@@ -634,61 +634,6 @@ void UI::renderImGui(Grid3D& grid, SimulationState& state, CameraState& camera) 
         grid.initRandomStaggeredVelocities(1.0f);
     }
 
-    // Add some preset scenarios
-    ImGui::Separator();
-    ImGui::Text("Presets:");
-
-    if (ImGui::Button("Smoke Plume")) {
-        // Clear everything first
-        grid.clearAllVelocities();
-        std::fill(grid.dens.begin(), grid.dens.end(), 0.0f);
-
-        // Add density at bottom center
-        int centerX = grid.N / 2;
-        int centerY = 2;
-        int centerZ = grid.N / 2;
-
-        for (int k = centerZ-1; k <= centerZ+1; k++) {
-            for (int i = centerX-1; i <= centerX+1; i++) {
-                grid.add_density(i, centerY, k, 150.0f);
-            }
-        }
-
-        // Add upward velocity
-        for (int k = centerZ-1; k <= centerZ+1; k++) {
-            for (int i = centerX-1; i <= centerX+1; i++) {
-                grid.add_velocity(i, centerY, k, 0.0f, 1.5f, 0.0f);
-            }
-        }
-    }
-
-    ImGui::SameLine();
-    if (ImGui::Button("Vortex")) {
-        grid.clearAllVelocities();
-        std::fill(grid.dens.begin(), grid.dens.end(), 0.0f);
-
-        // Add a vortex in the center
-        for (int k = grid.N/2-2; k <= grid.N/2+2; k++) {
-            for (int j = grid.N/2-2; j <= grid.N/2+2; j++) {
-                for (int i = grid.N/2-2; i <= grid.N/2+2; i++) {
-                    float dx = (float)i - grid.N/2.0f;
-                    float dy = (float)j - grid.N/2.0f;
-                    float dz = (float)k - grid.N/2.0f;
-                    float r = sqrt(dx*dx + dy*dy + dz*dz);
-
-                    if (r > 0.1f && r < 3.0f) {
-                        float strength = 3.0f / (r + 0.1f);
-                        float vx = -dy * strength;
-                        float vy = dx * 0.5f * strength;
-                        float vz = 0.0f;
-
-                        grid.add_velocity(i, j, k, vx, vy, vz);
-                    }
-                }
-            }
-        }
-    }
-
     // Camera controls
     ImGui::Separator();
     ImGui::Text("Camera:");
@@ -733,10 +678,6 @@ void UI::renderImGui(Grid3D& grid, SimulationState& state, CameraState& camera) 
     ImGui::Text("Max Density: %.2f", maxDens);
     ImGui::Text("Max Pressure: %.4f", maxPress);
 
-    // Divergence check
-    ImGui::Separator();
-    ImGui::Text("Flow Status:");
-
     // Reset button
     ImGui::Separator();
     if (ImGui::Button("Reset Everything")) {
@@ -744,13 +685,6 @@ void UI::renderImGui(Grid3D& grid, SimulationState& state, CameraState& camera) 
         state.isRunning = false;
         state.visMode = SimulationState::DENSITY;
     }
-
-    // Help text
-    ImGui::Separator();
-    ImGui::Text("Controls:");
-    ImGui::BulletText("Right-click + drag: Rotate camera");
-    ImGui::BulletText("Mouse wheel: Zoom");
-    ImGui::BulletText("Space: Toggle simulation (not implemented)");
 
     ImGui::End();
 

@@ -384,7 +384,7 @@ private:
                         w_old[W_IX(i+1, j, k-1)] + w_old[W_IX(i+1, j, k)]
                     );
 
-                    // Backtrace (RK2 method - Sebastian likely uses something similar)
+                    // Backtrace (RK2 methodr)
                     float half_dt = 0.5f * dt;
 
                     // First evaluation at current position
@@ -543,7 +543,6 @@ private:
         float a = dt * visc * inv_h * inv_h;
 
         // FIRST: Save the current velocities (which are AFTER advection)
-        // These become the right-hand side of the linear system
         std::vector<float> u_rhs = u;  // w2 in paper
         std::vector<float> v_rhs = v;
         std::vector<float> w_rhs = w;
@@ -554,7 +553,7 @@ private:
         std::vector<float> w_new = w;
 
         // Solve diffusion for u using Gauss-Seidel
-        for (int iter = 0; iter < 20; iter++) {
+        for (int iter = 0; iter < 10; iter++) {
             for (int k = 1; k <= N; k++) {
                 for (int j = 1; j <= N; j++) {
                     for (int i = 0; i <= N; i++) {
@@ -691,7 +690,6 @@ private:
                 for (int i = 1; i <= N; i++) {
                     int idx = P_IX(i, j, k);
 
-                    // Divergence = ∇·u = (∂u/∂x + ∂v/∂y + ∂w/∂z)
                     float u_right = u[U_IX(i, j, k)];
                     float u_left = u[U_IX(i-1, j, k)];
                     float v_top = v[V_IX(i, j, k)];
@@ -699,7 +697,6 @@ private:
                     float w_front = w[W_IX(i, j, k)];
                     float w_back = w[W_IX(i, j, k-1)];
 
-                    // CORRECT: Divergence = difference / h
                     div[idx] = (u_right - u_left + v_top - v_bottom + w_front - w_back) * inv_h;
                 }
             }
@@ -708,13 +705,9 @@ private:
         // Set divergence boundary conditions
         set_bnd(0, div, N+2, N+2, N+2);
 
-        // 2. Solve Poisson equation: ∇²p = ρ∇·u / Δt
-        // In discrete form: (p_neighbors - 6*p_center) / h² = divergence / dt
-        // Rearranged: p_center = (sum(p_neighbors) - h²*divergence/dt) / 6
-
         float h_squared = h * h;
-        int num_iterations = 100;
-        float sor_factor = 1.9f;  // Over-relaxation for faster convergence
+        int num_iterations = 10;
+        float sor_factor = 1.9f;
 
         for (int iter = 0; iter < num_iterations; iter++) {
             for (int k = 1; k <= N; k++) {
@@ -727,23 +720,16 @@ private:
                                       pressure[P_IX(i, j-1, k)] + pressure[P_IX(i, j+1, k)] +
                                       pressure[P_IX(i, j, k-1)] + pressure[P_IX(i, j, k+1)];
 
-                        // Gauss-Seidel update with correct formula
-                        // ∇²p = div/dt  =>  (sum - 6p)/h² = div/dt
-                        // p_new = (sum - h²*div/dt) / 6
                         float new_p = (p_sum - h_squared * div[idx] / dt) / 6.0f;
 
-                        // SOR update
                         pressure[idx] = pressure[idx] + sor_factor * (new_p - pressure[idx]);
                     }
                 }
             }
 
-            // Zero pressure at boundaries
             set_bnd(0, pressure, N+2, N+2, N+2);
         }
 
-        // 3. Update velocities: u_new = u_old - dt * ∇p
-        // Note: In normalized units where ρ=1, the formula is just u -= dt*∇p
 
         // Update u velocities
         for (int k = 1; k <= N; k++) {
