@@ -7,7 +7,7 @@
 #include <iostream>
 #include <vector>
 
-int main() {
+int main331() {
     // --- GLFW + OpenGL window ---
     if (!glfwInit()) return -1;
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
