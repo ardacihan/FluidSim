@@ -227,6 +227,46 @@ public:
                s*t*v_old[V_IX(i+1, j+1)];
     }
 
+    float interpolate_u(float x, float y) const {
+        x = std::max(0.5f, std::min((float)N + 0.5f, x));
+        y = std::max(0.5f, std::min((float)N + 1.5f, y));
+
+        int i = (int)floor(x - 0.5f);
+        int j = (int)floor(y - 0.5f);
+
+        float s = (x - 0.5f) - i;
+        float t = (y - 0.5f) - j;
+
+        i = std::max(0, std::min(N, i));
+        j = std::max(0, std::min(N+1, j));
+
+        // Use u_old array for advection
+        return (1-s)*(1-t)*u[U_IX(i, j)] +
+               s*(1-t)*u[U_IX(i+1, j)] +
+               (1-s)*t*u[U_IX(i, j+1)] +
+               s*t*u[U_IX(i+1, j+1)];
+    }
+
+    float interpolate_v(float x, float y) const {
+        x = std::max(0.5f, std::min((float)N + 1.5f, x));
+        y = std::max(0.5f, std::min((float)N + 0.5f, y));
+
+        int i = (int)floor(x - 0.5f);
+        int j = (int)floor(y - 0.5f);
+
+        float s = (x - 0.5f) - i;
+        float t = (y - 0.5f) - j;
+
+        i = std::max(0, std::min(N+1, i));
+        j = std::max(0, std::min(N, j));
+
+        // Use v_old array for advection
+        return (1-s)*(1-t)*v[V_IX(i, j)] +
+               s*(1-t)*v[V_IX(i+1, j)] +
+               (1-s)*t*v[V_IX(i, j+1)] +
+               s*t*v[V_IX(i+1, j+1)];
+    }
+
 private:
 
     void set_bnd(int b, std::vector<float>& x, int size_x, int size_y) {
@@ -645,7 +685,7 @@ private:
         set_bnd(0, div, N+2, N+2);
 
         float h_squared = h * h;
-        int num_iterations = 10;
+        int num_iterations = 100;
         float sor_factor = 1.9f;
 
         // Solve Poisson equation with red-black ordering
@@ -756,13 +796,13 @@ private:
 
     void add_forces() {
         int centerX = N / 2;
-        int centerY = 2;
+        int centerY = N - 2;
 
         // Add velocity pattern
         for (int i = centerX-2; i <= centerX+2; i++) {
             float dx = (i - centerX) * 0.3f;
             // Simple upward flow with slight horizontal variation
-            add_velocity(i, centerY, -dx * 0.5f, 1.5f);
+            add_velocity(i, centerY, -dx * 0.5f, -1.5f);
             add_density(i, centerY, 150.0f);
             add_dye(i, centerY, 150.0f);
         }
@@ -772,6 +812,7 @@ private:
         add_forces();
         std::copy(u.begin(), u.end(), u_old.begin());
         std::copy(v.begin(), v.end(), v_old.begin());
+        project(dt);
 
         diffuse_velocity(dt);
         advect_velocity(dt);

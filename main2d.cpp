@@ -1,6 +1,6 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
-#include "imgUI.h"
+#include "imgui.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #include <iostream>
@@ -9,7 +9,7 @@
 #include "Grid2D.h"
 
 // --- Configuration ---
-int GRID_SIZE_2D = 128;
+int GRID_SIZE_2D = 64;
 int WINDOW_WIDTH_2D = 1280;
 int WINDOW_HEIGHT_2D = 720;
 
@@ -28,7 +28,7 @@ struct CameraState_2D {
 };
 
 struct SimulationState_2D {
-    float dt = 0.01f;
+    float dt = 0.05f;
     float diff = 0.001f;
     float visc = 0.001f;
     bool isRunning = false;
@@ -41,6 +41,16 @@ struct SimulationState_2D {
     };
 
     VisualizationMode visMode = DYE;
+
+    // NEW: Supersampling fidelity
+    enum FidelityLevel {
+        LOW = 1,      // 1x1 (original)
+        MEDIUM = 2,   // 2x2
+        HIGH = 4,     // 4x4
+        ULTRA = 8     // 8x8 (very high quality)
+    };
+
+    FidelityLevel fidelity = MEDIUM;
 
     // Velocity vector overlay
     bool showVelocityVectors = false;
@@ -61,7 +71,13 @@ namespace Graphics_2D {
     void setupOrthographic(int width, int height, const CameraState_2D& camera);
     void renderScene(Grid2D& grid, const SimulationState_2D& state);
     void drawCell(Grid2D& grid, const SimulationState_2D& state, int i, int j);
+    void drawCellSupersampled(Grid2D& grid, const SimulationState_2D& state, int i, int j);
     void drawVelocityVectors(Grid2D& grid, const SimulationState_2D& state);
+
+    // NEW: Helper functions for color calculation
+    std::vector<float> getDensityColor(float density);
+    std::vector<float> getPressureColor(float pressure);
+    std::vector<float> getDyeColor(float dyeValue);
 }
 
 namespace UI_2D {
@@ -151,97 +167,163 @@ void Graphics_2D::setupOrthographic(int width, int height, const CameraState_2D&
     float viewWidth = GRID_SIZE_2D * camera.zoom;
     float viewHeight = viewWidth / aspect;
 
-    glOrtho(-viewWidth/2 + camera.panX, viewWidth/2 + camera.panX,
-            -viewHeight/2 + camera.panY, viewHeight/2 + camera.panY,
+    // Grid goes from 0 to GRID_SIZE_2D
+    glOrtho(0 + camera.panX, GRID_SIZE_2D + camera.panX,
+            GRID_SIZE_2D + camera.panY, 0 + camera.panY,  // Y flipped for screen coordinates
             -1.0f, 1.0f);
 
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
 }
 
-void Graphics_2D::renderScene(Grid2D& grid, const SimulationState_2D& state) {
-    // Draw grid boundary
-    drawWireframeBox((float)GRID_SIZE_2D, (float)GRID_SIZE_2D);
+// NEW: Color calculation helper functions
+std::vector<float> Graphics_2D::getDensityColor(float density) {
+    std::vector<float> color(4, 0.0f); // RGBA
 
-    // Draw cells
-    for(int j = 1; j <= grid.N; j++) {
-        for(int i = 1; i <= grid.N; i++) {
-            drawCell(grid, state, i, j);
+    if (density > 0.05f) {
+        float alpha = std::min(density/100.0f, DENSITY_ALPHA_SCALE_2D);
+        float normalized = std::min(density/200.0f, 1.0f);
+
+        if (normalized < 0.5f) {
+            float t = normalized * 2.0f;
+            color = {0.0f, t, 1.0f, alpha};
+        } else {
+            float t = (normalized - 0.5f) * 2.0f;
+            color = {t, 1.0f, 1.0f, alpha};
         }
     }
 
-    // Draw velocity vectors if enabled
-    if (state.showVelocityVectors) {
-        drawVelocityVectors(grid, state);
+    return color;
+}
+
+std::vector<float> Graphics_2D::getPressureColor(float pressure) {
+    std::vector<float> color(4, 0.0f); // RGBA
+
+    float abs_p = std::abs(pressure);
+    if (abs_p > 0.001f) {
+        float normalized = std::min(abs_p / MAX_PRESSURE_2D, 1.0f);
+        float alpha = 0.3f + 0.7f * normalized;
+        color = {1.0f, 0.0f, 0.0f, alpha};
     }
+
+    return color;
+}
+
+std::vector<float> Graphics_2D::getDyeColor(float dyeValue) {
+    std::vector<float> color(4, 0.0f); // RGBA
+
+    if (dyeValue > 0.5f) {
+        float normalized = std::min(dyeValue / 100.0f, 1.0f);
+        float alpha = std::min(normalized, 0.95f);
+
+        // Beautiful color gradient: blue -> cyan -> green -> yellow -> red
+        if (normalized < 0.25f) {
+            float t = normalized * 4.0f;
+            color = {0.0f, t, 1.0f, alpha};
+        } else if (normalized < 0.5f) {
+            float t = (normalized - 0.25f) * 4.0f;
+            color = {0.0f, 1.0f, 1.0f - t, alpha};
+        } else if (normalized < 0.75f) {
+            float t = (normalized - 0.5f) * 4.0f;
+            color = {t, 1.0f, 0.0f, alpha};
+        } else {
+            float t = (normalized - 0.75f) * 4.0f;
+            color = {1.0f, 1.0f - t, 0.0f, alpha};
+        }
+    }
+
+    return color;
 }
 
 void Graphics_2D::drawCell(Grid2D& grid, const SimulationState_2D& state, int i, int j) {
     std::vector<float> color;
-    float alpha = 0.0f;
+    float value = 0.0f;
 
     switch (state.visMode) {
         case SimulationState_2D::DENSITY: {
-            float d = grid.dens[grid.P_IX(i, j)];
-            if (d > 0.05f) {
-                alpha = std::min(d/100.0f, DENSITY_ALPHA_SCALE_2D);
-                float normalized = std::min(d/200.0f, 1.0f);
-
-                if (normalized < 0.5f) {
-                    float t = normalized * 2.0f;
-                    color = {0.0f, t, 1.0f, alpha};
-                } else {
-                    float t = (normalized - 0.5f) * 2.0f;
-                    color = {t, 1.0f, 1.0f, alpha};
-                }
-            } else {
-                return;
-            }
+            value = grid.dens[grid.P_IX(i, j)];
+            color = getDensityColor(value);
             break;
         }
 
         case SimulationState_2D::PRESSURE: {
-            float p_val = grid.p[grid.P_IX(i, j)];
-            float abs_p = std::abs(p_val);
-
-            if (abs_p > 0.001f) {
-                float normalized = std::min(abs_p / MAX_PRESSURE_2D, 1.0f);
-                alpha = 0.3f + 0.7f * normalized;
-                color = {1.0f, 0.0f, 0.0f, alpha};
-            } else {
-                return;
-            }
+            value = grid.p[grid.P_IX(i, j)];
+            color = getPressureColor(value);
             break;
         }
-        case SimulationState_2D::DYE: {
-            float dye_val = grid.dye[grid.P_IX(i, j)];
-            if (dye_val > 0.5f) {
-                float normalized = std::min(dye_val / 100.0f, 1.0f);
-                alpha = std::min(normalized, 0.95f);
 
-                // Beautiful color gradient: blue -> cyan -> green -> yellow -> red
-                if (normalized < 0.25f) {
-                    float t = normalized * 4.0f;
-                    color = {0.0f, t, 1.0f, alpha};
-                } else if (normalized < 0.5f) {
-                    float t = (normalized - 0.25f) * 4.0f;
-                    color = {0.0f, 1.0f, 1.0f - t, alpha};
-                } else if (normalized < 0.75f) {
-                    float t = (normalized - 0.5f) * 4.0f;
-                    color = {t, 1.0f, 0.0f, alpha};
-                } else {
-                    float t = (normalized - 0.75f) * 4.0f;
-                    color = {1.0f, 1.0f - t, 0.0f, alpha};
-                }
-            } else {
-                return;
-            }
+        case SimulationState_2D::DYE: {
+            value = grid.dye[grid.P_IX(i, j)];
+            color = getDyeColor(value);
             break;
         }
     }
 
-    drawSquare((float)i + 0.5f, (float)j + 0.5f, 0.9f,
-               color[0], color[1], color[2], color[3]);
+    // Only draw if there's something to show
+    if (color[3] > 0.01f) {
+        drawSquare((float)i + 0.5f, (float)j + 0.5f, 0.9f,
+                   color[0], color[1], color[2], color[3]);
+    }
+}
+
+// NEW: Supersampled cell drawing
+void Graphics_2D::drawCellSupersampled(Grid2D& grid, const SimulationState_2D& state, int i, int j) {
+    int subdiv = (int)state.fidelity;
+
+    // Early out for low fidelity (original behavior)
+    if (subdiv == 1) {
+        drawCell(grid, state, i, j);
+        return;
+    }
+
+    // High fidelity: supersampling
+    const float cellSize = 1.0f;
+    const float subSize = cellSize / subdiv;
+    const float drawSize = subSize * 0.9f;
+
+    float baseX = (float)i + 0.5f;
+    float baseY = (float)j + 0.5f;
+
+    // Use immediate mode for simplicity
+    for (int subY = 0; subY < subdiv; subY++) {
+        float subCenterY = baseY - 0.5f + (subY + 0.5f) * subSize;
+
+        for (int subX = 0; subX < subdiv; subX++) {
+            float subCenterX = baseX - 0.5f + (subX + 0.5f) * subSize;
+
+            // Get interpolated value at this sub-pixel position
+            float interpolatedValue = 0.0f;
+            std::vector<float> color(4, 0.0f);
+
+            switch (state.visMode) {
+                case SimulationState_2D::DENSITY: {
+                    interpolatedValue = grid.interpolate_density(subCenterX, subCenterY);
+                    color = getDensityColor(interpolatedValue);
+                    break;
+                }
+
+                case SimulationState_2D::PRESSURE: {
+                    // Need to add pressure interpolation to Grid2D or use cell value
+                    // For now, use cell value
+                    interpolatedValue = grid.p[grid.P_IX(i, j)];
+                    color = getPressureColor(interpolatedValue);
+                    break;
+                }
+
+                case SimulationState_2D::DYE: {
+                    interpolatedValue = grid.interpolate_dye(subCenterX, subCenterY);
+                    color = getDyeColor(interpolatedValue);
+                    break;
+                }
+            }
+
+            // Only draw if there's something to show
+            if (color[3] > 0.01f) {
+                drawSquare(subCenterX, subCenterY, drawSize,
+                           color[0], color[1], color[2], color[3]);
+            }
+        }
+    }
 }
 
 void Graphics_2D::drawVelocityVectors(Grid2D& grid, const SimulationState_2D& state) {
@@ -267,6 +349,27 @@ void Graphics_2D::drawVelocityVectors(Grid2D& grid, const SimulationState_2D& st
                 drawArrow(centerX, centerY, endX, endY, r, g, b);
             }
         }
+    }
+}
+
+void Graphics_2D::renderScene(Grid2D& grid, const SimulationState_2D& state) {
+    // Draw grid boundary
+    drawWireframeBox((float)GRID_SIZE_2D, (float)GRID_SIZE_2D);
+
+    // Draw cells with supersampling if enabled
+    for(int j = 1; j <= grid.N; j++) {
+        for(int i = 1; i <= grid.N; i++) {
+            if (state.fidelity == SimulationState_2D::LOW) {
+                drawCell(grid, state, i, j);
+            } else {
+                drawCellSupersampled(grid, state, i, j);
+            }
+        }
+    }
+
+    // Draw velocity vectors if enabled
+    if (state.showVelocityVectors) {
+        drawVelocityVectors(grid, state);
     }
 }
 
@@ -315,15 +418,22 @@ void Input::handleMouseInteraction(GLFWwindow* window, Grid2D& grid, SimulationS
         float viewWidth = GRID_SIZE_2D * camera.zoom;
         float viewHeight = viewWidth / aspect;
 
+        // Calculate normalized coordinates (0 to 1)
         float normX = mousePos.x / width;
-        float normY = mousePos.y / height;
+        float normY = mousePos.y / height;  // Already in screen coordinates (Y down)
 
-        float worldX = (normX - 0.5f) * viewWidth + camera.panX + GRID_SIZE_2D/2;
-        float worldY = (0.5f - normY) * viewHeight + camera.panY + GRID_SIZE_2D/2;
+        // Map to grid coordinates (accounting for camera pan)
+        float gridPosX = normX * viewWidth - camera.panX;
+        float gridPosY = normY * viewHeight - camera.panY;
 
-        int gridX = (int)worldX;
-        int gridY = (int)worldY;
+        int gridX = (int)gridPosX;
+        int gridY = (int)gridPosY;
 
+        // Debug output
+        // std::cout << "Mouse: (" << mousePos.x << ", " << mousePos.y << ") ";
+        // std::cout << "Grid: (" << gridX << ", " << gridY << ")" << std::endl;
+
+        // Boundary check
         if (gridX >= 1 && gridX <= grid.N && gridY >= 1 && gridY <= grid.N) {
             if (!state.isAddingForce) {
                 state.isAddingForce = true;
@@ -336,12 +446,12 @@ void Input::handleMouseInteraction(GLFWwindow* window, Grid2D& grid, SimulationS
 
             // Convert screen velocity to world velocity
             float velX = dx * camera.zoom * 0.1f;
-            float velY = -dy * camera.zoom * 0.1f;
+            float velY = dy * camera.zoom * 0.1f;  // Positive because screen Y is downward
 
-            // Add velocity and density at mouse position
+            // Add velocity and density
             grid.add_velocity(gridX, gridY, velX, velY);
-            //grid.add_density(gridX, gridY, 100.0f);
-            grid.add_dye(gridX, gridY, 100.0f);  // Add dye instead of density
+            grid.add_density(gridX, gridY, 100.0f);
+            grid.add_dye(gridX, gridY, 100.0f);
 
             state.lastInteractionPos = mousePos;
         }
@@ -369,7 +479,7 @@ void UI_2D::renderImGUI(Grid2D& grid, SimulationState_2D& state, CameraState_2D&
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    ImGui::Begin("2D FlUI_2Dd Controls");
+    ImGui::Begin("2D Fluid Controls");
 
     // FPS and stats
     ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
@@ -390,6 +500,25 @@ void UI_2D::renderImGUI(Grid2D& grid, SimulationState_2D& state, CameraState_2D&
     ImGui::SliderFloat("Time Step (dt)", &state.dt, 0.001f, 0.1f, "%.4f");
     ImGui::SliderFloat("Viscosity", &state.visc, 0.0f, 0.1f, "%.4f");
     ImGui::SliderFloat("Density Diffusion", &state.diff, 0.0f, 0.1f, "%.4f");
+
+    // NEW: Supersampling control
+    ImGui::Separator();
+    ImGui::Text("Visualization Quality:");
+    if (ImGui::RadioButton("Low (1x1)", state.fidelity == SimulationState_2D::LOW)) {
+        state.fidelity = SimulationState_2D::LOW;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Medium (2x2)", state.fidelity == SimulationState_2D::MEDIUM)) {
+        state.fidelity = SimulationState_2D::MEDIUM;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("High (4x4)", state.fidelity == SimulationState_2D::HIGH)) {
+        state.fidelity = SimulationState_2D::HIGH;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Ultra (8x8)", state.fidelity == SimulationState_2D::ULTRA)) {
+        state.fidelity = SimulationState_2D::ULTRA;
+    }
 
     // Visualization mode selection
     ImGui::Separator();
@@ -428,7 +557,7 @@ void UI_2D::renderImGUI(Grid2D& grid, SimulationState_2D& state, CameraState_2D&
     ImGui::Checkbox("Show Velocity Vectors", &state.showVelocityVectors);
 
     if (state.showVelocityVectors) {
-        ImGui::SliderFloat("Vector Scale", &state.vectorScale, 0.1f, 20.0f);
+        ImGui::SliderFloat("Vector Scale", &state.vectorScale, 0.1f, 100.0f);
         ImGui::SliderInt("Vector Skip", &state.vectorSkip, 1, 8);
         ImGui::SliderFloat("Min Velocity", &state.minVelocityThreshold, 0.0f, 1.0f);
     }
@@ -448,6 +577,7 @@ void UI_2D::renderImGUI(Grid2D& grid, SimulationState_2D& state, CameraState_2D&
         grid.clearAllVelocities();
         std::fill(grid.dens.begin(), grid.dens.end(), 0.0f);
         std::fill(grid.p.begin(), grid.p.end(), 0.0f);
+        grid.clearAllDye();
     }
     ImGui::SameLine();
     if (ImGui::Button("Random Velocities")) {
@@ -523,7 +653,7 @@ GLFWwindow* App_2D::initializeWindow() {
     GLFWwindow* window = glfwCreateWindow(
         WINDOW_WIDTH_2D,
         WINDOW_HEIGHT_2D,
-        "2D FlUI_2Dd Simulation - Density & Pressure",
+        "2D Fluid Simulation with Supersampling",
         NULL, NULL
     );
 
@@ -584,7 +714,7 @@ void App_2D::mainLoop(GLFWwindow* window, Grid2D& grid, CameraState_2D& camera, 
         // Render 2D scene
         Graphics_2D::renderScene(grid, state);
 
-        // Render UI_2D
+        // Render UI
         UI_2D::renderImGUI(grid, state, camera);
 
         // Swap buffers
@@ -612,7 +742,7 @@ int main() {
     // Setup ImGUI
     UI_2D::setupImGUI(window);
 
-    // Setup Graphics_2D
+    // Setup Graphics
     App_2D::initializeGraphics_2D();
 
     // Create simulation grid
