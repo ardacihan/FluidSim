@@ -10,10 +10,6 @@
 
 class Grid2D {
 public:
-    float sphere_radius = 6.0f;
-    float sphere_x = 16.0f;
-    float sphere_y = 16.0f;
-
     int N; // Grid size (N x N) - number of pressure cells
     float dt;
     float diff;
@@ -172,7 +168,6 @@ public:
                s*t*dens_old[P_IX(i+1, j+1)];
     }
 
-    // NEW: Interpolate dye value
     float interpolate_dye(float x, float y) const {
         x = std::max(0.5f, std::min((float)N + 0.5f, x));
         y = std::max(0.5f, std::min((float)N + 0.5f, y));
@@ -747,7 +742,6 @@ private:
         set_bnd(0, dens, N+2, N+2);
     }
 
-    // NEW: Dissipate dye over time
     void dissipate_dye(float dt, float alpha = 0.05f) {
         float factor = 1.0f / (1.0f + dt * alpha);
 
@@ -770,7 +764,7 @@ private:
             // Simple upward flow with slight horizontal variation
             add_velocity(i, centerY, -dx * 0.5f, 1.5f);
             add_density(i, centerY, 150.0f);
-            add_dye(i, centerY, 150.0f); // NEW: Add dye too
+            add_dye(i, centerY, 150.0f);
         }
     }
 

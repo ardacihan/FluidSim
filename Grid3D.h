@@ -22,6 +22,10 @@ public:
     std::vector<float> u_old, v_old, w_old;
     std::vector<float> dens, dens_old;
 
+    std::vector<float> dye;
+    std::vector<float> dye_old;
+
+
     Grid3D(int size, float diffusion, float viscosity, float timestep)
         : N(size), diff(diffusion), visc(viscosity), dt(timestep)
     {
@@ -41,6 +45,9 @@ public:
         int w_count = (N + 2) * (N + 2) * (N + 1);
         w.resize(w_count, 0.0f);
         w_old.resize(w_count, 0.0f);
+
+        dye.resize(cell_count, 0.0f);
+        dye_old.resize(cell_count, 0.0f);
 
         h = 1.0f / N;
         inv_h = N;
@@ -66,6 +73,16 @@ public:
         dens[P_IX(i, j, k)] += amount;
     }
 
+    void add_dye(int i, int j, int k, float amount) {
+        dye[P_IX(i, j,k)] += amount;
+    }
+
+    void add_dye(int i, int j,int k, float r, float g, float b) {
+
+        float gray = (r + g + b) / 3.0f;
+        dye[P_IX(i, j, k)] += gray;
+    }
+
     void add_velocity(int i, int j, int k, float amountU, float amountV, float amountW) {
         u[U_IX(i, j, k)] += amountU * 0.5f;
         u[U_IX(i+1, j, k)] += amountU * 0.5f;
@@ -76,6 +93,7 @@ public:
     }
 
     void step() {
+        dye_step();
         vel_step();
         dens_step();
     }
@@ -94,6 +112,11 @@ public:
         std::fill(u_old.begin(), u_old.end(), 0.0f);
         std::fill(v_old.begin(), v_old.end(), 0.0f);
         std::fill(w_old.begin(), w_old.end(), 0.0f);
+    }
+
+    void clearAllDye() {
+        std::fill(dye.begin(), dye.end(), 0.0f);
+        std::fill(dye_old.begin(), dye_old.end(), 0.0f);
     }
 
     void initRandomStaggeredVelocities(float magnitude = 0.5f) {
@@ -123,6 +146,33 @@ public:
             }
         }
         project(dt);
+    }
+
+    float interpolate_dye(float x, float y, float z) const {
+        x = std::max(0.5f, std::min((float)N + 0.5f, x));
+        y = std::max(0.5f, std::min((float)N + 0.5f, y));
+        z = std::max(0.5f, std::min((float)N + 0.5f, z));
+
+        int i = (int)floor(x - 0.5f);
+        int j = (int)floor(y - 0.5f);
+        int k = (int)floor(z - 0.5f);
+
+        float s = (x - 0.5f) - i;
+        float t = (y - 0.5f) - j;
+        float u = (z - 0.5f) - k;
+
+        i = std::max(0, std::min(N+1, i));
+        j = std::max(0, std::min(N+1, j));
+        k = std::max(0, std::min(N+1, k));
+
+        return (1-s)*(1-t)*(1-u)*dye_old[P_IX(i, j, k)] +
+               s*(1-t)*(1-u)*dye_old[P_IX(i+1, j, k)] +
+               (1-s)*t*(1-u)*dye_old[P_IX(i, j+1, k)] +
+               s*t*(1-u)*dye_old[P_IX(i+1, j+1, k)] +
+               (1-s)*(1-t)*u*dye_old[P_IX(i, j, k+1)] +
+               s*(1-t)*u*dye_old[P_IX(i+1, j, k+1)] +
+               (1-s)*t*u*dye_old[P_IX(i, j+1, k+1)] +
+               s*t*u*dye_old[P_IX(i+1, j+1, k+1)];
     }
 
     float interpolate_density(float x, float y, float z) const {
@@ -399,6 +449,38 @@ private:
         set_bnd(0, dens, N+2, N+2, N+2);
     }
 
+
+    void advect_dye(float dt) {
+        std::copy(dye.begin(), dye.end(), dye_old.begin());
+
+        #pragma omp parallel for collapse(3)
+        for (int k = 1; k <= N; k++) {
+            for (int j = 1; j <= N; j++) {
+                for (int i = 1; i <= N; i++) {
+                    float x = (float)i + 0.5f;
+                    float y = (float)j + 0.5f;
+                    float z = (float)k + 0.5f;
+
+                    auto vel = getVelocityAtCellCenter(i, j, k);
+                    float u_vel = vel[0];
+                    float v_vel = vel[1];
+                    float w_vel = vel[2];
+
+                    float srcX = x - dt * u_vel * inv_h;
+                    float srcY = y - dt * v_vel * inv_h;
+                    float srcZ = z - dt * w_vel * inv_h;
+
+                    srcX = std::max(0.5f, std::min((float)N + 0.5f, srcX));
+                    srcY = std::max(0.5f, std::min((float)N + 0.5f, srcY));
+                    srcZ = std::max(0.5f, std::min((float)N + 0.5f, srcZ));
+
+                    dye[P_IX(i, j, k)] = interpolate_dye(srcX, srcY, srcZ);
+                }
+            }
+        }
+        set_bnd(0, dye, N+2, N+2, N+2);
+    }
+
     void diffuse_velocity(float dt) {
         if (visc <= 0.0f) return;
 
@@ -619,6 +701,21 @@ private:
         set_bnd(0, dens, N+2, N+2, N+2);
     }
 
+    void dissipate_dye(float dt, float alpha = 0.05f) {
+        float factor = 1.0f / (1.0f + dt * alpha);
+
+    #pragma omp parallel for collapse(3)
+        for (int k = 1; k <= N; k++) {
+            for (int j = 1; j <= N; j++) {
+                for (int i = 1; i <= N; i++) {
+                    int idx = P_IX(i, j, k);
+                    dye[idx] *= factor;
+                }
+            }
+        }
+        set_bnd(0, dye, N+2, N+2, N+2);
+    }
+
     void add_forces() {
         int centerX = N / 2;
         int centerY = 2;
@@ -630,12 +727,18 @@ private:
                 float dz = (k - centerZ) * 0.3f;
                 add_velocity(i, centerY, k, -dz, 1.5f, dx);
                 add_density(i, centerY, k, 150.0f);
+                add_dye(i, centerY, k, 150.0f);
+
             }
         }
     }
 
     void vel_step() {
         add_forces();
+        std::copy(u.begin(), u.end(), u_old.begin());
+        std::copy(v.begin(), v.end(), v_old.begin());
+        std::copy(w.begin(), w.end(), w_old.begin());
+
         diffuse_velocity(dt);
         advect_velocity(dt);
         project(dt);
@@ -645,6 +748,11 @@ private:
         advect_density(dt);
         diffuse_density(dt);
         dissipate_density(dt, 0.32f);
+    }
+
+    void dye_step() {
+        advect_dye(dt);
+        dissipate_dye(dt, 0.05f); // Slow dissipation for nice trails
     }
 };
 

@@ -24,7 +24,7 @@ float DENSITY_ALPHA_SCALE = 0.8f;
 struct CameraState {
     float rotX = 30.0f;
     float rotY = -45.0f;
-    float distance = 600.0f;
+    float distance = 60.0f;
     ImVec2 lastMousePos;
     bool isDragging = false;
 };
@@ -38,13 +38,14 @@ struct SimulationState {
     // Visualization modes
     enum VisualizationMode {
         DENSITY,        // Show density (blue gradient)
-        PRESSURE        // Show pressure field (red/transparent)
+        PRESSURE,        // Show pressure field (red/transparent)
+        DYE
     };
 
-    VisualizationMode visMode = DENSITY;
+    VisualizationMode visMode = DYE;
 
     // Layer visualization
-    bool showSingleLayer = true;
+    bool showSingleLayer = false;
     int visibleLayer = 7; // Center layer by default
     int layerAxis = 1; // 0=X, 1=Y, 2=Z
 
@@ -53,7 +54,15 @@ struct SimulationState {
     float vectorScale = 2.0f;
     int vectorSkip = 2;
     float minVelocityThreshold = 0.02f;
+
+    //Add dye funtionalities
+    ImVec2 lastInteractionPos;
+    bool isAddingForce = false;
+    bool addDye = true;
+    bool addVelocity = true;
 };
+
+
 
 // --- Forward Declarations ---
 namespace Graphics {
@@ -76,6 +85,10 @@ namespace UI {
 
 namespace Input {
     void handleCameraInput(CameraState& camera);
+    void handleMouseInteraction3D(GLFWwindow* window,
+                                     Grid3D& grid,
+                                     SimulationState& state,
+                                     const CameraState& camera);
 }
 
 namespace App {
@@ -446,6 +459,31 @@ void Graphics::drawCell(Grid3D& grid, const SimulationState& state, int i, int j
             }
             break;
         }
+        case SimulationState::DYE: {
+            float dye_val = grid.dye[grid.P_IX(i, j,k)];
+            if (dye_val > 0.05f) {
+                float normalized = std::min(dye_val / 100.0f, 1.0f);
+                alpha = std::min(normalized, 0.95f);
+
+                // Beautiful color gradient: blue -> cyan -> green -> yellow -> red
+                if (normalized < 0.25f) {
+                    float t = normalized * 4.0f;
+                    color = {0.0f, t, 1.0f, alpha};
+                } else if (normalized < 0.5f) {
+                    float t = (normalized - 0.25f) * 4.0f;
+                    color = {0.0f, 1.0f, 1.0f - t, alpha};
+                } else if (normalized < 0.75f) {
+                    float t = (normalized - 0.5f) * 4.0f;
+                    color = {t, 1.0f, 0.0f, alpha};
+                } else {
+                    float t = (normalized - 0.75f) * 4.0f;
+                    color = {1.0f, 1.0f - t, 0.0f, alpha};
+                }
+            } else {
+                return;
+            }
+            break;
+        }
     }
 
     drawCube((float)i + 0.5f, (float)j + 0.5f, (float)k + 0.5f,
@@ -517,6 +555,79 @@ void Input::handleCameraInput(CameraState& camera) {
     }
 }
 
+void Input::handleMouseInteraction3D(GLFWwindow* window,
+                                     Grid3D& grid,
+                                     SimulationState& state,
+                                     const CameraState& camera)
+{
+    if (ImGui::GetIO().WantCaptureMouse) return;
+    if (!state.showSingleLayer) return;
+
+    int width, height;
+    glfwGetFramebufferSize(window, &width, &height);
+
+    bool ctrlPressed =
+        glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
+        glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
+
+    if (!ctrlPressed || !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        state.isAddingForce = false;
+        return;
+    }
+
+    ImVec2 mousePos = ImGui::GetMousePos();
+
+    if (!state.isAddingForce) {
+        state.isAddingForce = true;
+        state.lastInteractionPos = mousePos;
+        return;
+    }
+
+    float dx = mousePos.x - state.lastInteractionPos.x;
+    float dy = mousePos.y - state.lastInteractionPos.y;
+
+    float velScale = 0.05f;
+    float vx =  dx * velScale;
+    float vy = -dy * velScale;
+    float vz = 0.0f;
+
+    float nx = mousePos.x / width;
+    float ny = mousePos.y / height;
+
+    int i = int(nx * grid.N) + 1;
+    int j = int((1.0f - ny) * grid.N) + 1;
+    int k = state.visibleLayer + 1;
+
+    if (i < 1 || i > grid.N ||
+        j < 1 || j > grid.N ||
+        k < 1 || k > grid.N)
+        return;
+
+    switch (state.layerAxis) {
+        case 0: // X slice
+            std::swap(i, k);
+            vx = 0.0f;
+            break;
+        case 1: // Y slice
+            std::swap(j, k);
+            vy = 0.0f;
+            break;
+        case 2: // Z slice
+            vz = 0.0f;
+            break;
+    }
+
+    if (state.addVelocity)
+        grid.add_velocity(i, j, k, vx, vy, vz);
+
+    if (state.addDye)
+        grid.add_dye(i, j, k, 100.0f);
+
+    state.lastInteractionPos = mousePos;
+}
+
+
+
 // --- UI Implementation ---
 void UI::setupImGui(GLFWwindow* window) {
     IMGUI_CHECKVERSION();
@@ -579,6 +690,10 @@ void UI::renderImGui(Grid3D& grid, SimulationState& state, CameraState& camera) 
     if (ImGui::RadioButton("Pressure Field", state.visMode == SimulationState::PRESSURE)) {
         state.visMode = SimulationState::PRESSURE;
     }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Dye", state.visMode == SimulationState::DYE)) {
+        state.visMode = SimulationState::DYE;
+    }
 
     // Show color scheme info
     ImGui::Separator();
@@ -587,9 +702,12 @@ void UI::renderImGui(Grid3D& grid, SimulationState& state, CameraState& camera) 
         ImGui::TextColored(ImVec4(0, 0, 1, 1), "Blue: Low density");
         ImGui::TextColored(ImVec4(0, 1, 1, 1), "Cyan: Medium density");
         ImGui::TextColored(ImVec4(1, 1, 1, 1), "White: High density");
-    } else {
+    } else if(state.visMode == SimulationState::PRESSURE)  {
         ImGui::TextColored(ImVec4(1, 0, 0, 0.3f), "Transparent Red: Low pressure");
         ImGui::TextColored(ImVec4(1, 0, 0, 1.0f), "Opaque Red: High pressure");
+    }else {
+        ImGui::TextColored(ImVec4(0, 0, 1, 1), "Blue -> Cyan -> Green -> Yellow -> Red");
+        ImGui::Text("(Based on dye concentration)");
     }
 
     // Vector visualization (optional overlay)
@@ -631,7 +749,15 @@ void UI::renderImGui(Grid3D& grid, SimulationState& state, CameraState& camera) 
     ImGui::SameLine();
     if (ImGui::Button("Random Velocities")) {
         grid.initRandomStaggeredVelocities(1.0f);
-    }
+    }\
+    ImGui::Separator();
+    ImGui::Text("Slice Interaction:");
+    ImGui::TextColored(ImVec4(0.5f,1.0f,0.5f,1),
+        "CTRL + Left Mouse: Add to active slice");
+
+    ImGui::Checkbox("Add Velocity", &state.addVelocity);
+    ImGui::Checkbox("Add Dye", &state.addDye);
+
 
     // Camera controls
     ImGui::Separator();
@@ -754,7 +880,7 @@ void App::mainLoop(GLFWwindow* window, Grid3D& grid, CameraState& camera, Simula
 
         // Handle input
         Input::handleCameraInput(camera);
-
+        Input::handleMouseInteraction3D(window, grid, state, camera);
         // Update simulation
         grid.dt = state.dt;
         grid.diff = state.diff;
@@ -798,7 +924,7 @@ void App::shutdown(GLFWwindow* window) {
 }
 
 // --- Main Function ---
-int main() {
+int main2() {
     // Initialize window
     GLFWwindow* window = App::initializeWindow();
     if (!window) {
