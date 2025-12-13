@@ -9,7 +9,7 @@
 #include "Grid2D.h"
 
 // --- Configuration ---
-int GRID_SIZE_2D = 64;
+int GRID_SIZE_2D = 252;
 int WINDOW_WIDTH_2D = 1280;
 int WINDOW_HEIGHT_2D = 720;
 
@@ -732,7 +732,7 @@ void App_2D::shutdown(GLFWwindow* window) {
 }
 
 // --- Main Function ---
-int main() {
+int main3() {
     // Initialize window
     GLFWwindow* window = App_2D::initializeWindow();
     if (!window) {

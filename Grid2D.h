@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <iostream>
+#include <chrono>
 #include <omp.h>
 
 class Grid2D {
@@ -808,15 +809,59 @@ private:
         }
     }
 
+
+
     void vel_step() {
+        auto start_total = std::chrono::high_resolution_clock::now();
+
+        // Force addition
+        auto start = std::chrono::high_resolution_clock::now();
         add_forces();
+        auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> elapsed = end - start;
+        std::cout << "add_forces: " << elapsed.count() << " seconds\n";
+
+        // Copy operations
+        start = std::chrono::high_resolution_clock::now();
         std::copy(u.begin(), u.end(), u_old.begin());
         std::copy(v.begin(), v.end(), v_old.begin());
-        project(dt);
+        end = std::chrono::high_resolution_clock::now();
+        elapsed = end - start;
+        std::cout << "copy vectors: " << elapsed.count() << " seconds\n";
 
-        diffuse_velocity(dt);
-        advect_velocity(dt);
+        // First projection
+        start = std::chrono::high_resolution_clock::now();
         project(dt);
+        end = std::chrono::high_resolution_clock::now();
+        elapsed = end - start;
+        std::cout << "project 1: " << elapsed.count() << " seconds\n";
+
+        // Velocity diffusion
+        start = std::chrono::high_resolution_clock::now();
+        diffuse_velocity(dt);
+        end = std::chrono::high_resolution_clock::now();
+        elapsed = end - start;
+        std::cout << "diffuse_velocity: " << elapsed.count() << " seconds\n";
+
+        // Velocity advection
+        start = std::chrono::high_resolution_clock::now();
+        advect_velocity(dt);
+        end = std::chrono::high_resolution_clock::now();
+        elapsed = end - start;
+        std::cout << "advect_velocity: " << elapsed.count() << " seconds\n";
+
+        // Second projection
+        start = std::chrono::high_resolution_clock::now();
+        project(dt);
+        end = std::chrono::high_resolution_clock::now();
+        elapsed = end - start;
+        std::cout << "project 2: " << elapsed.count() << " seconds\n";
+
+        // Total time
+        auto end_total = std::chrono::high_resolution_clock::now();
+        elapsed = end_total - start_total;
+        std::cout << "Total vel_step time: " << elapsed.count() << " seconds\n";
+        std::cout << "------------------------\n";
     }
 
     void dens_step() {
