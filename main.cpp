@@ -10,6 +10,7 @@
 
 // --- Configuration ---
 
+float M_PI = 3.14;
 int GRID_SIZE = 32;
 int WINDOW_WIDTH = 1280;
 int WINDOW_HEIGHT = 720;
