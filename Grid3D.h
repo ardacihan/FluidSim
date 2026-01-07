@@ -727,8 +727,8 @@ private:
                 float dx = (i - centerX) * 0.3f;
                 float dz = (k - centerZ) * 0.3f;
                 add_velocity(i, centerY, k, -dz, 1.5f, dx);
-                add_density(i, centerY, k, 150.0f);
-                add_dye(i, centerY, k, 150.0f);
+                add_density(i, centerY, k, 10.0f);
+                add_dye(i, centerY, k, 10.0f);
 
             }
         }
