@@ -8,17 +8,14 @@
 #include <cmath>
 #include "Grid2D.h"
 
-// --- Configuration ---
 int GRID_SIZE_2D = 64;
 int WINDOW_WIDTH_2D = 1280;
 int WINDOW_HEIGHT_2D = 720;
 
-// Fixed color scaling values
 float MAX_PRESSURE_2D = 1.0f;
 float MAX_VELOCITY_2D = 2.0f;
 float DENSITY_ALPHA_SCALE_2D = 0.8f;
 
-// --- Global State ---
 struct CameraState_2D {
     float zoom = 0.5f;
     float panX = 0.0f;
@@ -45,8 +42,7 @@ struct SimulationState_2D {
     enum FidelityLevel {
         LOW = 1,      // 1x1 (original)
         MEDIUM = 2,   // 2x2
-        HIGH = 4,     // 4x4
-        ULTRA = 8     // 8x8 (very high quality)
+        HIGH = 4     // 4x4
     };
 
     FidelityLevel fidelity = MEDIUM;
@@ -62,7 +58,6 @@ struct SimulationState_2D {
     bool isAddingForce = false;
 };
 
-// --- Forward Declarations ---
 namespace Graphics_2D {
     void drawSquare(float x, float y, float size, float r, float g, float b, float alpha);
     void drawWireframeBox(float width, float height);
@@ -95,7 +90,6 @@ namespace App_2D {
     void shutdown(GLFWwindow* window);
 }
 
-// --- Graphics_2D Implementation ---
 void Graphics_2D::drawSquare(float x, float y, float size, float r, float g, float b, float alpha) {
     glColor4f(r, g, b, alpha);
 
@@ -372,7 +366,6 @@ void Graphics_2D::renderScene(Grid2D& grid, const SimulationState_2D& state) {
     }
 }
 
-// --- Input Handling ---
 void Input::handleCameraInput(CameraState_2D& camera) {
     if (!ImGui::GetIO().WantCaptureMouse) {
         // Pan with middle mouse button
@@ -457,7 +450,6 @@ void Input::handleMouseInteraction(GLFWwindow* window, Grid2D& grid, SimulationS
     }
 }
 
-// --- UI_2D Implementation ---
 void UI_2D::setupImGUI(GLFWwindow* window) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -511,10 +503,7 @@ void UI_2D::renderImGUI(Grid2D& grid, SimulationState_2D& state, CameraState_2D&
     if (ImGui::RadioButton("High (4x4)", state.fidelity == SimulationState_2D::HIGH)) {
         state.fidelity = SimulationState_2D::HIGH;
     }
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Ultra (8x8)", state.fidelity == SimulationState_2D::ULTRA)) {
-        state.fidelity = SimulationState_2D::ULTRA;
-    }
+
 
     // Visualization mode selection
     ImGui::Separator();
@@ -640,7 +629,6 @@ void UI_2D::renderImGUI(Grid2D& grid, SimulationState_2D& state, CameraState_2D&
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
-// --- App Implementation ---
 GLFWwindow* App_2D::initializeWindow() {
     if (!glfwInit()) {
         std::cerr << "Failed to initialize GLFW" << std::endl;
@@ -654,7 +642,7 @@ GLFWwindow* App_2D::initializeWindow() {
     GLFWwindow* window = glfwCreateWindow(
         WINDOW_WIDTH_2D,
         WINDOW_HEIGHT_2D,
-        "2D Fluid Simulation with Supersampling",
+        "2D Fluid Simulation",
         NULL, NULL
     );
 
@@ -733,7 +721,6 @@ void App_2D::shutdown(GLFWwindow* window) {
     glfwTerminate();
 }
 
-// --- Main Function ---
 int main() {
     // Initialize window
     GLFWwindow* window = App_2D::initializeWindow();

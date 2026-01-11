@@ -48,7 +48,6 @@ add_executable(FluidSim
         main.cpp
         main2d.cpp
         main2d.h
-        Grid2D.cpp
         Grid2D.h
         ${IMGUI_SOURCES}
         ${GLEW_SOURCES}
