@@ -20,7 +20,7 @@ float DENSITY_ALPHA_SCALE_2D = 0.8f;
 
 // --- Global State ---
 struct CameraState_2D {
-    float zoom = 1.2f;
+    float zoom = 0.5f;
     float panX = 0.0f;
     float panY = 0.0f;
     ImVec2 lastMousePos;
@@ -111,12 +111,13 @@ void Graphics_2D::drawSquare(float x, float y, float size, float r, float g, flo
 void Graphics_2D::drawWireframeBox(float width, float height) {
     glColor3f(1.0f, 1.0f, 1.0f);
     glLineWidth(2.0f);
+    const float offset = 1.0f;
 
     glBegin(GL_LINE_LOOP);
-    glVertex2f(0, 0);
-    glVertex2f(width, 0);
-    glVertex2f(width, height);
-    glVertex2f(0, height);
+    glVertex2f(offset, offset);
+    glVertex2f(width + offset, offset);
+    glVertex2f(width+ offset, height + offset);
+    glVertex2f(offset, height + offset);
     glEnd();
 }
 
@@ -583,11 +584,11 @@ void UI_2D::renderImGUI(Grid2D& grid, SimulationState_2D& state, CameraState_2D&
     ImGui::Separator();
     ImGui::Text("Camera:");
     ImGui::SliderFloat("Zoom", &camera.zoom, 0.5f, 20.0f);
-    ImGui::SliderFloat("Pan X", &camera.panX, -GRID_SIZE_2D*2.0f, GRID_SIZE_2D*2.0f);
-    ImGui::SliderFloat("Pan Y", &camera.panY, -GRID_SIZE_2D*2.0f, GRID_SIZE_2D*2.0f);
+    ImGui::SliderFloat("Pan X", &camera.panX, -60.0f, 60.0f);
+    ImGui::SliderFloat("Pan Y", &camera.panY, -60.0f, 60.0f);
 
     if (ImGui::Button("Reset Camera")) {
-        camera.zoom = 1.2f;
+        camera.zoom = 0.5f;
         camera.panX = GRID_SIZE_2D * 0.5f;
         camera.panY = GRID_SIZE_2D * 0.5f;
     }

@@ -10,7 +10,7 @@
 
 // --- Configuration ---
 
-float M_PI = 3.14;
+//float M_PI = 3.14;
 int GRID_SIZE = 32;
 int WINDOW_WIDTH = 1280;
 int WINDOW_HEIGHT = 720;
@@ -925,7 +925,7 @@ void App::shutdown(GLFWwindow* window) {
 }
 
 // --- Main Function ---
-int main2() {
+int main3() {
     // Initialize window
     GLFWwindow* window = App::initializeWindow();
     if (!window) {

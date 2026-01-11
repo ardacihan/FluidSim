@@ -107,10 +107,13 @@ public:
     void step() {
         vel_step();
         dens_step();
-        dye_step(); // NEW: Advect dye separately
+        dye_step();
     }
 
-    std::vector<float> getVelocityAtCellCenter(int i, int j) const { // helper function that uses staggered grid for accessing each cell
+    std::vector<float> getVelocityAtCellCenter(int i, int j) const {
+        i = std::max(1, std::min(N, i));
+        j = std::max(1, std::min(N, j));
+
         float u_avg = 0.5f * (u[U_IX(i-1, j)] + u[U_IX(i, j)]);
         float v_avg = 0.5f * (v[V_IX(i, j-1)] + v[V_IX(i, j)]);
 
@@ -269,63 +272,38 @@ public:
     }
 
 private:
-
-    void set_bnd(int b, std::vector<float>& x, int size_x, int size_y) {
-        // b indicates the type of field:
-        // 0 = scalar (density, temperature)
-        // 1 = u velocity
-        // 2 = v velocity
-
-        // X boundaries (i = 0 and i = size_x-1)
-        for (int j = 1; j < size_y-1; j++) {
-            if (b == 1) {
-                x[0 + j*size_x] = 0.0f;
-            } else {
-                x[0 + j*size_x] = x[1 + j*size_x];
+    void set_bnd(int b, std::vector<float>& x, int sx, int sy) {
+        if (b == 1) {
+            for (int j = 0; j < sy; j++) {
+                x[j*sx] = 0.0f;
+                x[(sx-1)+j*sx] = 0.0f;
             }
-            if (b == 1) {
-                x[(size_x-1) + j*size_x] = 0.0f;
-            } else {
-                x[(size_x-1) + j*size_x] = x[(size_x-2) + j*size_x];
+            for (int i = 1; i < sx-1; i++) {
+                x[i] = -x[i+sx];
+                x[i+(sy-1)*sx] = -x[i+(sy-2)*sx];
             }
-        }
-
-        // Y boundaries (j = 0 and j = size_y-1)
-        for (int i = 1; i < size_x-1; i++) {
-            if (b == 2) {
-                x[i + 0*size_x] = 0.0f;
-            } else {
-                x[i + 0*size_x] = x[i + 1*size_x];
+        } else if (b == 2) {
+            for (int i = 0; i < sx; i++) {
+                x[i] = 0.0f;
+                x[i+(sy-1)*sx] = 0.0f;
             }
-            if (b == 2) {
-                x[i + (size_y-1)*size_x] = 0.0f;
-            } else {
-                x[i + (size_y-1)*size_x] = x[i + (size_y-2)*size_x];
+            for (int j = 1; j < sy-1; j++) {
+                x[j*sx] = -x[1+j*sx];
+                x[(sx-1)+j*sx] = -x[(sx-2)+j*sx];
             }
-        }
-
-        // Set corners (average of adjacent faces for better stability)
-        int corners[4][2] = {
-            {0, 0}, {size_x-1, 0},
-            {0, size_y-1}, {size_x-1, size_y-1}
-        };
-
-        for (int c = 0; c < 4; c++) {
-            int i = corners[c][0];
-            int j = corners[c][1];
-
-            float sum = 0.0f;
-            int count = 0;
-
-            // Average valid neighbors
-            if (i > 0) { sum += x[(i-1) + j*size_x]; count++; }
-            if (i < size_x-1) { sum += x[(i+1) + j*size_x]; count++; }
-            if (j > 0) { sum += x[i + (j-1)*size_x]; count++; }
-            if (j < size_y-1) { sum += x[i + (j+1)*size_x]; count++; }
-
-            if (count > 0) {
-                x[i + j*size_x] = sum / count;
+        } else {
+            for (int j = 1; j < sy-1; j++) {
+                x[j*sx] = x[1+j*sx];
+                x[(sx-1)+j*sx] = x[(sx-2)+j*sx];
             }
+            for (int i = 1; i < sx-1; i++) {
+                x[i] = x[i+sx];
+                x[i+(sy-1)*sx] = x[i+(sy-2)*sx];
+            }
+            x[0] = x[1+sx];
+            x[sx-1] = x[(sx-2)+sx];
+            x[(sy-1)*sx] = x[1+(sy-2)*sx];
+            x[(sy-1)*sx + sx-1] = x[(sx-2)+(sy-2)*sx];
         }
     }
 
@@ -334,10 +312,14 @@ private:
         std::copy(u.begin(), u.end(), u_old.begin());
         std::copy(v.begin(), v.end(), v_old.begin());
 
+        // APPLY BOUNDARY CONDITIONS TO OLD VELOCITIES BEFORE ADVECTION
+        set_bnd(1, u_old, N+1, N+2);
+        set_bnd(2, v_old, N+2, N+1);
+
         // Advect u velocities (x-component)
         #pragma omp parallel for collapse(2)
         for (int j = 1; j <= N; j++) {
-            for (int i = 0; i <= N; i++) {
+            for (int i = 1; i <= N-1; i++) {  // Interior u faces only
                 // Position of this u-face
                 float x = i + 0.5f;
                 float y = j + 0.5f;
@@ -375,7 +357,7 @@ private:
 
         // Advect v velocities (y-component)
         #pragma omp parallel for collapse(2)
-        for (int j = 0; j <= N; j++) {
+        for (int j = 1; j <= N-1; j++) {  // Interior v faces only
             for (int i = 1; i <= N; i++) {
                 float x = i + 0.5f;
                 float y = j + 0.5f;
@@ -404,65 +386,44 @@ private:
             }
         }
 
-        // Apply boundary conditions
+        // Apply boundary conditions AFTER advection
         set_bnd(1, u, N+1, N+2);
         set_bnd(2, v, N+2, N+1);
     }
 
     void advect_density(float dt) {
-        // Save current density to old array
-        std::copy(dens.begin(), dens.end(), dens_old.begin());
+        dens_old = dens;
+        set_bnd(0, dens_old, N+2, N+2);
 
-        #pragma omp parallel for collapse(2)
-        for (int j = 1; j <= N; j++) {
+#pragma omp parallel for collapse(2)
+        for (int j = 1; j <= N; j++)
             for (int i = 1; i <= N; i++) {
-                // Start position at cell center
-                float x = (float)i + 0.5f;
-                float y = (float)j + 0.5f;
-
-                // Get velocity at cell center
-                auto vel = getVelocityAtCellCenter(i, j);
-                float u_vel = vel[0];
-                float v_vel = vel[1];
-
-                // Backtrack to find source position
-                float srcX = x - dt * u_vel * inv_h;
-                float srcY = y - dt * v_vel * inv_h;
-
-                // Clamp to grid boundaries
-                srcX = std::max(0.5f, std::min((float)N + 0.5f, srcX));
-                srcY = std::max(0.5f, std::min((float)N + 0.5f, srcY));
-
-                // Interpolate density from old field
-                dens[P_IX(i, j)] = interpolate_density(srcX, srcY);
+                auto v = getVelocityAtCellCenter(i, j);
+                float x = i + 0.5f - dt * v[0] * inv_h;
+                float y = j + 0.5f - dt * v[1] * inv_h;
+                x = std::max(0.5f, std::min((float)N + 0.5f, x));
+                y = std::max(0.5f, std::min((float)N + 0.5f, y));
+                dens[P_IX(i,j)] = interpolate_density(x, y);
             }
-        }
+
         set_bnd(0, dens, N+2, N+2);
     }
 
-    // NEW: Advect dye using semi-Lagrangian method
     void advect_dye(float dt) {
-        std::copy(dye.begin(), dye.end(), dye_old.begin());
+        dye_old = dye;
+        set_bnd(0, dye_old, N+2, N+2);
 
-        #pragma omp parallel for collapse(2)
-        for (int j = 1; j <= N; j++) {
+#pragma omp parallel for collapse(2)
+        for (int j = 1; j <= N; j++)
             for (int i = 1; i <= N; i++) {
-                float x = (float)i + 0.5f;
-                float y = (float)j + 0.5f;
-
-                auto vel = getVelocityAtCellCenter(i, j);
-                float u_vel = vel[0];
-                float v_vel = vel[1];
-
-                float srcX = x - dt * u_vel * inv_h;
-                float srcY = y - dt * v_vel * inv_h;
-
-                srcX = std::max(0.5f, std::min((float)N + 0.5f, srcX));
-                srcY = std::max(0.5f, std::min((float)N + 0.5f, srcY));
-
-                dye[P_IX(i, j)] = interpolate_dye(srcX, srcY);
+                auto v = getVelocityAtCellCenter(i, j);
+                float x = i + 0.5f - dt * v[0] * inv_h;
+                float y = j + 0.5f - dt * v[1] * inv_h;
+                x = std::max(0.5f, std::min((float)N + 0.5f, x));
+                y = std::max(0.5f, std::min((float)N + 0.5f, y));
+                dye[P_IX(i,j)] = interpolate_dye(x, y);
             }
-        }
+
         set_bnd(0, dye, N+2, N+2);
     }
 
@@ -616,7 +577,6 @@ private:
         dens = std::move(dens_new);
     }
 
-    // NEW: Diffuse dye (optional, usually dye doesn't diffuse)
     void diffuse_dye(float dt, float dye_diff = 0.0f) {
         if (dye_diff <= 0.0f) return;
 
@@ -726,10 +686,10 @@ private:
             set_bnd(0, pressure, N+2, N+2);
         }
 
-        // Update u velocities
+        // Update u velocities - NOW INCLUDES BOUNDARIES (i=0 to i=N)
         #pragma omp parallel for collapse(2)
         for (int j = 1; j <= N; j++) {
-            for (int i = 1; i <= N-1; i++) {
+            for (int i = 0; i <= N; i++) {  // CHANGED: was i=1 to N-1
                 float p_right = pressure[P_IX(i+1, j)];
                 float p_left = pressure[P_IX(i, j)];
                 float pressure_grad = (p_right - p_left) * inv_h;
@@ -738,9 +698,9 @@ private:
             }
         }
 
-        // Update v velocities
+        // Update v velocities - NOW INCLUDES BOUNDARIES (j=0 to j=N)
         #pragma omp parallel for collapse(2)
-        for (int j = 1; j <= N-1; j++) {
+        for (int j = 0; j <= N; j++) {  // CHANGED: was j=1 to N-1
             for (int i = 1; i <= N; i++) {
                 float p_top = pressure[P_IX(i, j+1)];
                 float p_bottom = pressure[P_IX(i, j)];
