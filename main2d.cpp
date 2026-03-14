@@ -8,19 +8,16 @@
 #include <cmath>
 #include "Grid2D.h"
 
-// --- Configuration ---
-int GRID_SIZE_2D = 252;
+int GRID_SIZE_2D = 64;
 int WINDOW_WIDTH_2D = 1280;
 int WINDOW_HEIGHT_2D = 720;
 
-// Fixed color scaling values
 float MAX_PRESSURE_2D = 1.0f;
 float MAX_VELOCITY_2D = 2.0f;
 float DENSITY_ALPHA_SCALE_2D = 0.8f;
 
-// --- Global State ---
 struct CameraState_2D {
-    float zoom = 8.0f;
+    float zoom = 0.5f;
     float panX = 0.0f;
     float panY = 0.0f;
     ImVec2 lastMousePos;
@@ -28,7 +25,7 @@ struct CameraState_2D {
 };
 
 struct SimulationState_2D {
-    float dt = 0.05f;
+    float dt = 0.01f;
     float diff = 0.001f;
     float visc = 0.001f;
     bool isRunning = false;
@@ -42,12 +39,10 @@ struct SimulationState_2D {
 
     VisualizationMode visMode = DYE;
 
-    // NEW: Supersampling fidelity
     enum FidelityLevel {
         LOW = 1,      // 1x1 (original)
         MEDIUM = 2,   // 2x2
-        HIGH = 4,     // 4x4
-        ULTRA = 8     // 8x8 (very high quality)
+        HIGH = 4     // 4x4
     };
 
     FidelityLevel fidelity = MEDIUM;
@@ -63,7 +58,6 @@ struct SimulationState_2D {
     bool isAddingForce = false;
 };
 
-// --- Forward Declarations ---
 namespace Graphics_2D {
     void drawSquare(float x, float y, float size, float r, float g, float b, float alpha);
     void drawWireframeBox(float width, float height);
@@ -73,8 +67,6 @@ namespace Graphics_2D {
     void drawCell(Grid2D& grid, const SimulationState_2D& state, int i, int j);
     void drawCellSupersampled(Grid2D& grid, const SimulationState_2D& state, int i, int j);
     void drawVelocityVectors(Grid2D& grid, const SimulationState_2D& state);
-
-    // NEW: Helper functions for color calculation
     std::vector<float> getDensityColor(float density);
     std::vector<float> getPressureColor(float pressure);
     std::vector<float> getDyeColor(float dyeValue);
@@ -98,7 +90,6 @@ namespace App_2D {
     void shutdown(GLFWwindow* window);
 }
 
-// --- Graphics_2D Implementation ---
 void Graphics_2D::drawSquare(float x, float y, float size, float r, float g, float b, float alpha) {
     glColor4f(r, g, b, alpha);
 
@@ -114,12 +105,13 @@ void Graphics_2D::drawSquare(float x, float y, float size, float r, float g, flo
 void Graphics_2D::drawWireframeBox(float width, float height) {
     glColor3f(1.0f, 1.0f, 1.0f);
     glLineWidth(2.0f);
+    const float offset = 1.0f;
 
     glBegin(GL_LINE_LOOP);
-    glVertex2f(0, 0);
-    glVertex2f(width, 0);
-    glVertex2f(width, height);
-    glVertex2f(0, height);
+    glVertex2f(offset, offset);
+    glVertex2f(width + offset, offset);
+    glVertex2f(width+ offset, height + offset);
+    glVertex2f(offset, height + offset);
     glEnd();
 }
 
@@ -164,19 +156,21 @@ void Graphics_2D::setupOrthographic(int width, int height, const CameraState_2D&
     glLoadIdentity();
 
     float aspect = (float)width / (float)height;
-    float viewWidth = GRID_SIZE_2D * camera.zoom;
+    float viewWidth = GRID_SIZE_2D / camera.zoom;
     float viewHeight = viewWidth / aspect;
 
-    // Grid goes from 0 to GRID_SIZE_2D
-    glOrtho(0 + camera.panX, GRID_SIZE_2D + camera.panX,
-            GRID_SIZE_2D + camera.panY, 0 + camera.panY,  // Y flipped for screen coordinates
-            -1.0f, 1.0f);
+    float left = -viewWidth * 0.5f + camera.panX;
+    float right = viewWidth * 0.5f + camera.panX;
+    float bottom = viewHeight * 0.5f + camera.panY;
+    float top = -viewHeight * 0.5f + camera.panY;
+
+    glOrtho(left, right, bottom, top, -1.0f, 1.0f);
 
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
 }
 
-// NEW: Color calculation helper functions
+
 std::vector<float> Graphics_2D::getDensityColor(float density) {
     std::vector<float> color(4, 0.0f); // RGBA
 
@@ -266,7 +260,6 @@ void Graphics_2D::drawCell(Grid2D& grid, const SimulationState_2D& state, int i,
     }
 }
 
-// NEW: Supersampled cell drawing
 void Graphics_2D::drawCellSupersampled(Grid2D& grid, const SimulationState_2D& state, int i, int j) {
     int subdiv = (int)state.fidelity;
 
@@ -373,7 +366,6 @@ void Graphics_2D::renderScene(Grid2D& grid, const SimulationState_2D& state) {
     }
 }
 
-// --- Input Handling ---
 void Input::handleCameraInput(CameraState_2D& camera) {
     if (!ImGui::GetIO().WantCaptureMouse) {
         // Pan with middle mouse button
@@ -386,18 +378,17 @@ void Input::handleCameraInput(CameraState_2D& camera) {
             float dx = mousePos.x - camera.lastMousePos.x;
             float dy = mousePos.y - camera.lastMousePos.y;
 
-            camera.panX -= dx * camera.zoom * 0.01f;
-            camera.panY += dy * camera.zoom * 0.01f;
+            camera.panX -= dx * (GRID_SIZE_2D / camera.zoom) * 0.01f;
+            camera.panY += dy * (GRID_SIZE_2D / camera.zoom) * 0.01f;
             camera.lastMousePos = mousePos;
         } else {
             camera.isPanning = false;
         }
 
-        // Zoom with mouse wheel
         float wheel = ImGui::GetIO().MouseWheel;
         if (wheel != 0) {
-            camera.zoom *= (1.0f - wheel * 0.1f);
-            camera.zoom = std::max(1.0f, std::min(camera.zoom, 50.0f));
+            camera.zoom *= (1.0f + wheel * 0.1f);
+            camera.zoom = std::max(0.5f, std::min(camera.zoom, 20.0f));
         }
     }
 }
@@ -415,23 +406,22 @@ void Input::handleMouseInteraction(GLFWwindow* window, Grid2D& grid, SimulationS
 
         // Convert screen coordinates to grid coordinates
         float aspect = (float)width / (float)height;
-        float viewWidth = GRID_SIZE_2D * camera.zoom;
+        float viewWidth = GRID_SIZE_2D / camera.zoom;
         float viewHeight = viewWidth / aspect;
 
         // Calculate normalized coordinates (0 to 1)
         float normX = mousePos.x / width;
-        float normY = mousePos.y / height;  // Already in screen coordinates (Y down)
+        float normY = mousePos.y / height;
 
-        // Map to grid coordinates (accounting for camera pan)
-        float gridPosX = normX * viewWidth - camera.panX;
-        float gridPosY = normY * viewHeight - camera.panY;
+        // Map to grid coordinates
+        float left = -viewWidth * 0.5f + camera.panX;
+        float top = -viewHeight * 0.5f + camera.panY;
+
+        float gridPosX = left + normX * viewWidth;
+        float gridPosY = top + normY * viewHeight;
 
         int gridX = (int)gridPosX;
         int gridY = (int)gridPosY;
-
-        // Debug output
-        // std::cout << "Mouse: (" << mousePos.x << ", " << mousePos.y << ") ";
-        // std::cout << "Grid: (" << gridX << ", " << gridY << ")" << std::endl;
 
         // Boundary check
         if (gridX >= 1 && gridX <= grid.N && gridY >= 1 && gridY <= grid.N) {
@@ -445,13 +435,13 @@ void Input::handleMouseInteraction(GLFWwindow* window, Grid2D& grid, SimulationS
             float dy = mousePos.y - state.lastInteractionPos.y;
 
             // Convert screen velocity to world velocity
-            float velX = dx * camera.zoom * 0.1f;
-            float velY = dy * camera.zoom * 0.1f;  // Positive because screen Y is downward
+            float velX = dx * (GRID_SIZE_2D) * 0.01f;
+            float velY = dy * (GRID_SIZE_2D) * 0.01f;
 
             // Add velocity and density
             grid.add_velocity(gridX, gridY, velX, velY);
-            grid.add_density(gridX, gridY, 100.0f);
-            grid.add_dye(gridX, gridY, 100.0f);
+            grid.add_density(gridX, gridY, 300.0f);
+            grid.add_dye(gridX, gridY, 300.0f);
 
             state.lastInteractionPos = mousePos;
         }
@@ -460,7 +450,6 @@ void Input::handleMouseInteraction(GLFWwindow* window, Grid2D& grid, SimulationS
     }
 }
 
-// --- UI_2D Implementation ---
 void UI_2D::setupImGUI(GLFWwindow* window) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -501,7 +490,6 @@ void UI_2D::renderImGUI(Grid2D& grid, SimulationState_2D& state, CameraState_2D&
     ImGui::SliderFloat("Viscosity", &state.visc, 0.0f, 0.1f, "%.4f");
     ImGui::SliderFloat("Density Diffusion", &state.diff, 0.0f, 0.1f, "%.4f");
 
-    // NEW: Supersampling control
     ImGui::Separator();
     ImGui::Text("Visualization Quality:");
     if (ImGui::RadioButton("Low (1x1)", state.fidelity == SimulationState_2D::LOW)) {
@@ -515,10 +503,7 @@ void UI_2D::renderImGUI(Grid2D& grid, SimulationState_2D& state, CameraState_2D&
     if (ImGui::RadioButton("High (4x4)", state.fidelity == SimulationState_2D::HIGH)) {
         state.fidelity = SimulationState_2D::HIGH;
     }
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Ultra (8x8)", state.fidelity == SimulationState_2D::ULTRA)) {
-        state.fidelity = SimulationState_2D::ULTRA;
-    }
+
 
     // Visualization mode selection
     ImGui::Separator();
@@ -587,14 +572,14 @@ void UI_2D::renderImGUI(Grid2D& grid, SimulationState_2D& state, CameraState_2D&
     // Camera controls
     ImGui::Separator();
     ImGui::Text("Camera:");
-    ImGui::SliderFloat("Zoom", &camera.zoom, 1.0f, 50.0f);
-    ImGui::SliderFloat("Pan X", &camera.panX, -GRID_SIZE_2D*2.0f, GRID_SIZE_2D*2.0f);
-    ImGui::SliderFloat("Pan Y", &camera.panY, -GRID_SIZE_2D*2.0f, GRID_SIZE_2D*2.0f);
+    ImGui::SliderFloat("Zoom", &camera.zoom, 0.5f, 20.0f);
+    ImGui::SliderFloat("Pan X", &camera.panX, -60.0f, 60.0f);
+    ImGui::SliderFloat("Pan Y", &camera.panY, -60.0f, 60.0f);
 
     if (ImGui::Button("Reset Camera")) {
-        camera.zoom = 8.0f;
-        camera.panX = 0.0f;
-        camera.panY = 0.0f;
+        camera.zoom = 0.5f;
+        camera.panX = GRID_SIZE_2D * 0.5f;
+        camera.panY = GRID_SIZE_2D * 0.5f;
     }
 
     // Statistics
@@ -604,6 +589,7 @@ void UI_2D::renderImGUI(Grid2D& grid, SimulationState_2D& state, CameraState_2D&
     float maxVel = 0.0f;
     float maxDens = 0.0f;
     float maxPress = 0.0f;
+    float totalDye = 0.0f;
 
     for (int i = 0; i < grid.u.size(); i++) {
         if (fabs(grid.u[i]) > maxVel) maxVel = fabs(grid.u[i]);
@@ -620,9 +606,14 @@ void UI_2D::renderImGUI(Grid2D& grid, SimulationState_2D& state, CameraState_2D&
         if (fabs(grid.p[i]) > maxPress) maxPress = fabs(grid.p[i]);
     }
 
+    for (int i = 0; i < grid.dye.size(); i++) {
+        totalDye += grid.dye[i];
+    }
+
     ImGui::Text("Max Velocity: %.4f", maxVel);
     ImGui::Text("Max Density: %.2f", maxDens);
     ImGui::Text("Max Pressure: %.4f", maxPress);
+    ImGui::Text("Total Dye: %.2f", totalDye);
 
     // Reset button
     ImGui::Separator();
@@ -638,7 +629,6 @@ void UI_2D::renderImGUI(Grid2D& grid, SimulationState_2D& state, CameraState_2D&
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
-// --- App Implementation ---
 GLFWwindow* App_2D::initializeWindow() {
     if (!glfwInit()) {
         std::cerr << "Failed to initialize GLFW" << std::endl;
@@ -648,12 +638,11 @@ GLFWwindow* App_2D::initializeWindow() {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
-    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 
     GLFWwindow* window = glfwCreateWindow(
         WINDOW_WIDTH_2D,
         WINDOW_HEIGHT_2D,
-        "2D Fluid Simulation with Supersampling",
+        "2D Fluid Simulation",
         NULL, NULL
     );
 
@@ -667,6 +656,7 @@ GLFWwindow* App_2D::initializeWindow() {
 
     glewExperimental = GL_TRUE;
     if (glewInit() != GLEW_OK) {
+        std::cerr << "Failed to initialize GLEW" << std::endl;
         glfwDestroyWindow(window);
         glfwTerminate();
         return nullptr;
@@ -705,16 +695,16 @@ void App_2D::mainLoop(GLFWwindow* window, Grid2D& grid, CameraState_2D& camera, 
 
         // Clear screen
         glViewport(0, 0, display_w, display_h);
-        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
-        // Setup view
+        // Setup view BEFORE rendering
         Graphics_2D::setupOrthographic(display_w, display_h, camera);
 
         // Render 2D scene
         Graphics_2D::renderScene(grid, state);
 
-        // Render UI
+        // Render UI (this should be last)
         UI_2D::renderImGUI(grid, state, camera);
 
         // Swap buffers
@@ -731,8 +721,7 @@ void App_2D::shutdown(GLFWwindow* window) {
     glfwTerminate();
 }
 
-// --- Main Function ---
-int main3() {
+int main() {
     // Initialize window
     GLFWwindow* window = App_2D::initializeWindow();
     if (!window) {
@@ -750,6 +739,9 @@ int main3() {
 
     // Initialize state
     CameraState_2D camera;
+    camera.panX = GRID_SIZE_2D * 0.5f;
+    camera.panY = GRID_SIZE_2D * 0.5f;
+
     SimulationState_2D state;
 
     // Run main loop

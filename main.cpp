@@ -8,19 +8,17 @@
 #include <cmath>
 #include "Grid3D.h"
 
-// --- Configuration ---
 
-int GRID_SIZE = 55;
+float M_PI = 3.14;
+int GRID_SIZE = 24;
 int WINDOW_WIDTH = 1280;
 int WINDOW_HEIGHT = 720;
 
-// Fixed color scaling values
 float MAX_PRESSURE = 1.0f;
 float MAX_VELOCITY = 2.0f;
 float DENSITY_ALPHA_SCALE = 0.8f;
 
 
-// --- Global State ---
 struct CameraState {
     float rotX = 30.0f;
     float rotY = -45.0f;
@@ -49,13 +47,11 @@ struct SimulationState {
     int visibleLayer = 7; // Center layer by default
     int layerAxis = 1; // 0=X, 1=Y, 2=Z
 
-    // Optional: show velocity vectors as overlay
     bool showVelocityVectors = false;
     float vectorScale = 2.0f;
     int vectorSkip = 2;
     float minVelocityThreshold = 0.02f;
 
-    //Add dye funtionalities
     ImVec2 lastInteractionPos;
     bool isAddingForce = false;
     bool addDye = true;
@@ -64,7 +60,6 @@ struct SimulationState {
 
 
 
-// --- Forward Declarations ---
 namespace Graphics {
     void drawCube(float x, float y, float z, float size, float r, float g, float b, float alpha);
     void drawWireframeBox(float size);
@@ -98,7 +93,6 @@ namespace App {
     void shutdown(GLFWwindow* window);
 }
 
-// --- Graphics Implementation ---
 void Graphics::drawCube(float x, float y, float z, float size, float r, float g, float b, float alpha) {
     glPushMatrix();
     glTranslatef(x, y, z);
@@ -130,10 +124,15 @@ void Graphics::drawCube(float x, float y, float z, float size, float r, float g,
 }
 
 void Graphics::drawWireframeBox(float size) {
+    float offset = 1.0f;
+
     glPushMatrix();
+    glTranslatef(offset, offset, offset);
+
     glScalef(size, size, size);
     glColor3f(1.0f, 1.0f, 1.0f);
     glLineWidth(2.0f);
+
 
     glBegin(GL_LINES);
     // Bottom rect
@@ -532,7 +531,7 @@ void Graphics::drawVelocityVectors(Grid3D& grid, const SimulationState& state) {
     }
 }
 
-// --- Input Handling ---
+
 void Input::handleCameraInput(CameraState& camera) {
     if (!ImGui::GetIO().WantCaptureMouse) {
         if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
@@ -628,7 +627,7 @@ void Input::handleMouseInteraction3D(GLFWwindow* window,
 
 
 
-// --- UI Implementation ---
+
 void UI::setupImGui(GLFWwindow* window) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -817,7 +816,7 @@ void UI::renderImGui(Grid3D& grid, SimulationState& state, CameraState& camera) 
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
-// --- App Implementation ---
+
 GLFWwindow* App::initializeWindow() {
     if (!glfwInit()) {
         std::cerr << "Failed to initialize GLFW" << std::endl;
@@ -924,7 +923,7 @@ void App::shutdown(GLFWwindow* window) {
 }
 
 // --- Main Function ---
-int main() {
+int main2() {
     // Initialize window
     GLFWwindow* window = App::initializeWindow();
     if (!window) {

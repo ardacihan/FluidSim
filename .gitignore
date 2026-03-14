@@ -1,1 +1,15 @@
 .idea/
+CMakeFiles/
+FluidSim.dir/
+Build/
+.vs/
+glfw-3.4/
+Win32/
+# Visual Studio project files
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.vcxproj.vcxproj*
+*.slnx
+/cmake_install.cmake
+/CMakeSettings.json
