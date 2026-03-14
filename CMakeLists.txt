@@ -8,8 +8,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(GLFW_DIR ${CMAKE_CURRENT_SOURCE_DIR}/glfw-3.4)
 set(GLEW_DIR ${CMAKE_CURRENT_SOURCE_DIR}/glew-2.1.0)
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/imgui)
-set(Vulkan_INCLUDE_DIR "C:/VulkanSDK/1.4.335.0/Include")
-set(Vulkan_LIBRARY "C:/VulkanSDK/1.4.335.0/Lib/vulkan-1.lib")
 
 # Build GLFW
 if(EXISTS ${GLFW_DIR}/CMakeLists.txt)
@@ -29,7 +27,6 @@ include_directories(
         ${IMGUI_DIR}
         ${IMGUI_DIR}/backends
         ${CMAKE_CURRENT_SOURCE_DIR}
-        ${Vulkan_INCLUDE_DIR}
 )
 
 # ImGui sources
@@ -50,11 +47,8 @@ add_definitions(-DGLEW_STATIC)
 add_executable(FluidSim
         main.cpp
         main2d.cpp
-        main2d.h
         Grid2D.cpp
         Grid2D.h
-        gpu_acc_functions/HWAcc.cpp
-        gpu_acc_functions/HWAcc.h
         ${IMGUI_SOURCES}
         ${GLEW_SOURCES}
 )
@@ -62,7 +56,6 @@ add_executable(FluidSim
 # Link libraries
 target_link_libraries(FluidSim
         ${GLFW_LIB}
-        ${Vulkan_LIBRARY}
         opengl32
         glu32
         gdi32

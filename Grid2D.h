@@ -440,7 +440,6 @@ private:
         set_bnd(0, dens, N+2, N+2);
     }
 
-    // NEW: Advect dye using semi-Lagrangian method
     void advect_dye(float dt) {
         std::copy(dye.begin(), dye.end(), dye_old.begin());
 
@@ -471,7 +470,6 @@ private:
 
         float a = dt * visc * inv_h * inv_h;
 
-        // Save the current velocities (which are AFTER advection)
         std::vector<float> u_rhs = u;
         std::vector<float> v_rhs = v;
 
@@ -481,7 +479,7 @@ private:
 
         // Solve diffusion for u using Gauss-Seidel with red-black ordering
         for (int iter = 0; iter < 10; iter++) {
-            // Red cells (where i+j is even)
+            // Red cells
             #pragma omp parallel for collapse(2)
             for (int j = 1; j <= N; j++) {
                 for (int i = 0; i <= N; i++) {
@@ -616,7 +614,6 @@ private:
         dens = std::move(dens_new);
     }
 
-    // NEW: Diffuse dye (optional, usually dye doesn't diffuse)
     void diffuse_dye(float dt, float dye_diff = 0.0f) {
         if (dye_diff <= 0.0f) return;
 
@@ -754,10 +751,8 @@ private:
         set_bnd(1, u, N+1, N+2);
         set_bnd(2, v, N+2, N+1);
 
-        // IMPORTANT: Store pressure for visualization/debugging
         p = pressure;
 
-        // DEBUG: Print max divergence to check if projection worked
         float max_div = 0.0f;
 
         #pragma omp parallel for collapse(2) reduction(max:max_div)
@@ -870,12 +865,9 @@ private:
         dissipate_density(dt, 0.32f);
     }
 
-    // NEW: Dye step
     void dye_step() {
         advect_dye(dt);
-        // Usually dye doesn't diffuse, but you can enable it if needed:
-        // diffuse_dye(dt, 0.0001f);
-        dissipate_dye(dt, 0.05f); // Slow dissipation for nice trails
+        dissipate_dye(dt, 0.05f); // Slow dissipation for nice visuals
     }
 };
 

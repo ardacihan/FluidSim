@@ -11,7 +11,7 @@
 
 class Grid3D {
 public:
-    int N; // Grid size (N x N x N)
+    int N; // Grid size (NxNxN MAC Grid)
     float dt;
     float diff;
     float visc;
@@ -332,7 +332,7 @@ private:
         std::copy(v.begin(), v.end(), v_old.begin());
         std::copy(w.begin(), w.end(), w_old.begin());
 
-        // Simplified backward Euler advection (faster than RK2)
+        // backward Euler advection
         #pragma omp parallel for collapse(3)
         for (int k = 1; k <= N; k++) {
             for (int j = 1; j <= N; j++) {
@@ -492,7 +492,7 @@ private:
         std::vector<float> v_temp = v;
         std::vector<float> w_temp = w;
 
-        // Reduced iterations with Jacobi (better for parallel)
+        // Jacobi iterations
         for (int iter = 0; iter < 5; iter++) {
             #pragma omp parallel for collapse(3)
             for (int k = 1; k <= N; k++) {
