@@ -47,7 +47,6 @@ add_definitions(-DGLEW_STATIC)
 add_executable(FluidSim
         main.cpp
         main2d.cpp
-        main2d.h
         Grid2D.h
         ${IMGUI_SOURCES}
         ${GLEW_SOURCES}

@@ -9,7 +9,7 @@
 #include "Grid3D.h"
 
 
-float M_PI = 3.14;
+//float M_PI = 3.14;
 int GRID_SIZE = 24;
 int WINDOW_WIDTH = 1280;
 int WINDOW_HEIGHT = 720;
