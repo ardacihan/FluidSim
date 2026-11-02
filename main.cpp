@@ -1,3 +1,4 @@
+#include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -5,520 +6,947 @@
 #include <iostream>
 #include <vector>
 #include <cmath>
-#include <algorithm>
-#include "Grid.h"
+#include "Grid3D.h"
 
-// =============================================================================
-// CONFIGURATION - Adjust these values to customize the simulation
-// =============================================================================
 
-// Grid dimensions
-const int GRID_COLS = 10;
-const int GRID_ROWS = 10;
+//float M_PI = 3.14;
+int GRID_SIZE = 24;
+int WINDOW_WIDTH = 1280;
+int WINDOW_HEIGHT = 720;
 
-// Window settings - High resolution fullscreen
-const int WINDOW_WIDTH = 1920;
-const int WINDOW_HEIGHT = 1080;
-const char* WINDOW_TITLE = "Fluid Simulation - Staggered Grid";
+float MAX_PRESSURE = 1.0f;
+float MAX_VELOCITY = 2.0f;
+float DENSITY_ALPHA_SCALE = 0.8f;
 
-// Grid colors (R, G, B, A) - values from 0-255
-const ImU32 BACKGROUND_TOP = IM_COL32(245, 247, 250, 255);
-const ImU32 BACKGROUND_BOTTOM = IM_COL32(235, 237, 242, 255);
-const ImU32 INNER_LINE_COLOR = IM_COL32(180, 185, 195, 255);
-const ImU32 WALL_COLOR = IM_COL32(35, 35, 40, 255);
-const float INNER_LINE_THICKNESS = 1.5f;
-const float WALL_THICKNESS = 4.0f;
 
-// Arrow visualization
-const float ARROW_MAX_LENGTH_RATIO = 0.8f;  // Max arrow length as fraction of cell size
-const float ARROW_BASE_HEAD_SIZE = 8.0f;    // Base size of arrow heads
-const float ARROW_MIN_WIDTH = 1.5f;         // Minimum arrow line width
-const float ARROW_MAX_WIDTH = 3.5f;         // Maximum arrow line width
-const float FLOW_THRESHOLD = 0.01f;         // Minimum flow to display arrow
+struct CameraState {
+    float rotX = 30.0f;
+    float rotY = -45.0f;
+    float distance = 60.0f;
+    ImVec2 lastMousePos;
+    bool isDragging = false;
+};
 
-// Arrow colors (low to high intensity)
-const int ARROW_COLOR_LOW_R = 50;
-const int ARROW_COLOR_LOW_G = 120;
-const int ARROW_COLOR_LOW_B = 220;
-const int ARROW_COLOR_HIGH_R = 220;
-const int ARROW_COLOR_HIGH_G = 80;
-const int ARROW_COLOR_HIGH_B = 80;
+struct SimulationState {
+    float dt = 0.01f;
+    float diff = 0.001f;
+    float visc = 0.001f;
+    bool isRunning = false;
 
-// UI settings
-const float UI_FONT_SCALE = 1.3f;
-const float UI_WINDOW_ROUNDING = 8.0f;
-const float UI_FRAME_ROUNDING = 4.0f;
+    // Visualization modes
+    enum VisualizationMode {
+        DENSITY,        // Show density (blue gradient)
+        PRESSURE,        // Show pressure field (red/transparent)
+        DYE
+    };
 
-// Mouse interaction
-const float MOUSE_DENSITY_AMOUNT = 10.0f;     // How much density to add per click
-const float MOUSE_VELOCITY_STRENGTH = 1.0f; // How much velocity to add per drag
-const float MOUSE_RADIUS = 1.0f;             // Radius of effect in cells
+    VisualizationMode visMode = DYE;
 
-// Simulation parameters
-const float DIFFUSION_RATE = 0.0001f;
-const float VISCOSITY = 0.0001f;
-const float TIME_STEP = 0.05f;
+    // Layer visualization
+    bool showSingleLayer = false;
+    int visibleLayer = 7; // Center layer by default
+    int layerAxis = 1; // 0=X, 1=Y, 2=Z
 
-// =============================================================================
-// Helper Functions
-// =============================================================================
+    bool showVelocityVectors = false;
+    float vectorScale = 2.0f;
+    int vectorSkip = 2;
+    float minVelocityThreshold = 0.02f;
 
-void initializeImGuiStyle() {
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = UI_WINDOW_ROUNDING;
-    style.FrameRounding = UI_FRAME_ROUNDING;
-    style.GrabRounding = UI_FRAME_ROUNDING;
-    style.Colors[ImGuiCol_WindowBg] = ImVec4(0.12f, 0.12f, 0.15f, 0.95f);
-    style.Colors[ImGuiCol_Button] = ImVec4(0.2f, 0.4f, 0.7f, 1.0f);
-    style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.3f, 0.5f, 0.8f, 1.0f);
-    style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.15f, 0.35f, 0.65f, 1.0f);
+    ImVec2 lastInteractionPos;
+    bool isAddingForce = false;
+    bool addDye = true;
+    bool addVelocity = true;
+};
+
+
+
+namespace Graphics {
+    void drawCube(float x, float y, float z, float size, float r, float g, float b, float alpha);
+    void drawWireframeBox(float size);
+    void drawArrow(float x1, float y1, float z1, float x2, float y2, float z2, float r, float g, float b);
+    void setupPerspective(int width, int height);
+    void setupCamera(const CameraState& camera);
+    void renderScene(Grid3D& grid, const SimulationState& state);
+    void drawCell(Grid3D& grid, const SimulationState& state, int i, int j, int k);
+    void drawVelocityVectors(Grid3D& grid, const SimulationState& state);
+    void drawWireframeSphere(float x, float y, float z, float radius, int segments);
+    void drawSolidSphere(float x, float y, float z, float radius, int segments);
 }
 
-// Calculate optimal cell size to fit grid perfectly in window
-float calculateCellSize(int windowWidth, int windowHeight, int gridCols, int gridRows) {
-    // Grid includes 2 extra cells for walls on each side
-    int totalCols = gridCols + 2;
-    int totalRows = gridRows + 2;
-
-    // Calculate maximum cell size that fits both dimensions
-    float cellSizeByWidth = (float)windowWidth / totalCols;
-    float cellSizeByHeight = (float)windowHeight / totalRows;
-
-    // Use the smaller of the two to ensure it fits
-    return std::min(cellSizeByWidth, cellSizeByHeight);
+namespace UI {
+    void setupImGui(GLFWwindow* window);
+    void renderImGui(Grid3D& grid, SimulationState& state, CameraState& camera);
 }
 
-void drawCellBackgrounds(ImDrawList* draw_list, const Grid& grid, float cellSize,
-                        float startX, float startY) {
-    // Find max density for normalization
-    float maxDensity = 0.0f;
-    for (int i = 1; i <= grid.CellCountX; ++i) {
-        for (int j = 1; j <= grid.CellCountY; ++j) {
-            maxDensity = std::max(maxDensity, grid.d[i][j]);
+namespace Input {
+    void handleCameraInput(CameraState& camera);
+    void handleMouseInteraction3D(GLFWwindow* window,
+                                     Grid3D& grid,
+                                     SimulationState& state,
+                                     const CameraState& camera);
+}
+
+namespace App {
+    GLFWwindow* initializeWindow();
+    void initializeGraphics();
+    void mainLoop(GLFWwindow* window, Grid3D& grid, CameraState& camera, SimulationState& state);
+    void shutdown(GLFWwindow* window);
+}
+
+void Graphics::drawCube(float x, float y, float z, float size, float r, float g, float b, float alpha) {
+    glPushMatrix();
+    glTranslatef(x, y, z);
+    glScalef(size, size, size);
+    glColor4f(r, g, b, alpha);
+
+    glBegin(GL_QUADS);
+    // Front
+    glVertex3f(-0.5f, -0.5f,  0.5f); glVertex3f( 0.5f, -0.5f,  0.5f);
+    glVertex3f( 0.5f,  0.5f,  0.5f); glVertex3f(-0.5f,  0.5f,  0.5f);
+    // Back
+    glVertex3f(-0.5f, -0.5f, -0.5f); glVertex3f(-0.5f,  0.5f, -0.5f);
+    glVertex3f( 0.5f,  0.5f, -0.5f); glVertex3f( 0.5f, -0.5f, -0.5f);
+    // Left
+    glVertex3f(-0.5f, -0.5f, -0.5f); glVertex3f(-0.5f, -0.5f,  0.5f);
+    glVertex3f(-0.5f,  0.5f,  0.5f); glVertex3f(-0.5f,  0.5f, -0.5f);
+    // Right
+    glVertex3f( 0.5f, -0.5f, -0.5f); glVertex3f( 0.5f,  0.5f, -0.5f);
+    glVertex3f( 0.5f,  0.5f,  0.5f); glVertex3f( 0.5f, -0.5f,  0.5f);
+    // Top
+    glVertex3f(-0.5f,  0.5f, -0.5f); glVertex3f(-0.5f,  0.5f,  0.5f);
+    glVertex3f( 0.5f,  0.5f,  0.5f); glVertex3f( 0.5f,  0.5f, -0.5f);
+    // Bottom
+    glVertex3f(-0.5f, -0.5f, -0.5f); glVertex3f( 0.5f, -0.5f, -0.5f);
+    glVertex3f( 0.5f, -0.5f,  0.5f); glVertex3f(-0.5f, -0.5f,  0.5f);
+    glEnd();
+
+    glPopMatrix();
+}
+
+void Graphics::drawWireframeBox(float size) {
+    float offset = 1.0f;
+
+    glPushMatrix();
+    glTranslatef(offset, offset, offset);
+
+    glScalef(size, size, size);
+    glColor3f(1.0f, 1.0f, 1.0f);
+    glLineWidth(2.0f);
+
+
+    glBegin(GL_LINES);
+    // Bottom rect
+    glVertex3f(0,0,0); glVertex3f(1,0,0);
+    glVertex3f(1,0,0); glVertex3f(1,0,1);
+    glVertex3f(1,0,1); glVertex3f(0,0,1);
+    glVertex3f(0,0,1); glVertex3f(0,0,0);
+    // Top rect
+    glVertex3f(0,1,0); glVertex3f(1,1,0);
+    glVertex3f(1,1,0); glVertex3f(1,1,1);
+    glVertex3f(1,1,1); glVertex3f(0,1,1);
+    glVertex3f(0,1,1); glVertex3f(0,1,0);
+    // Vertical pillars
+    glVertex3f(0,0,0); glVertex3f(0,1,0);
+    glVertex3f(1,0,0); glVertex3f(1,1,0);
+    glVertex3f(1,0,1); glVertex3f(1,1,1);
+    glVertex3f(0,0,1); glVertex3f(0,1,1);
+    glEnd();
+
+    glPopMatrix();
+}
+
+void Graphics::drawWireframeSphere(float x, float y, float z, float radius, int segments = 16) {
+    glPushMatrix();
+    glTranslatef(x, y, z);
+
+    glColor3f(0.8f, 0.8f, 0.2f); // Yellow sphere
+    glLineWidth(2.0f);
+
+    // Draw longitude lines
+    for (int i = 0; i <= segments; i++) {
+        float lat0 = M_PI * (-0.5f + (float)(i - 1) / segments);
+        float z0 = radius * sin(lat0);
+        float zr0 = radius * cos(lat0);
+
+        float lat1 = M_PI * (-0.5f + (float)i / segments);
+        float z1 = radius * sin(lat1);
+        float zr1 = radius * cos(lat1);
+
+        glBegin(GL_LINE_LOOP);
+        for (int j = 0; j <= segments; j++) {
+            float lng = 2 * M_PI * (float)(j - 1) / segments;
+            float x = cos(lng);
+            float y = sin(lng);
+
+            glVertex3f(x * zr0, y * zr0, z0);
+            glVertex3f(x * zr1, y * zr1, z1);
+        }
+        glEnd();
+    }
+
+    // Draw latitude lines
+    for (int j = 0; j < segments; j++) {
+        float lng0 = 2 * M_PI * (float)(j - 1) / segments;
+        float lng1 = 2 * M_PI * (float)j / segments;
+
+        glBegin(GL_LINE_LOOP);
+        for (int i = 0; i <= segments; i++) {
+            float lat = M_PI * (-0.5f + (float)(i - 1) / segments);
+            float z = radius * sin(lat);
+            float zr = radius * cos(lat);
+
+            glVertex3f(cos(lng0) * zr, sin(lng0) * zr, z);
+            glVertex3f(cos(lng1) * zr, sin(lng1) * zr, z);
+        }
+        glEnd();
+    }
+
+    glPopMatrix();
+}
+
+void Graphics::drawSolidSphere(float x, float y, float z, float radius, int segments = 16) {
+    glPushMatrix();
+    glTranslatef(x, y, z);
+
+    // Semi-transparent yellow
+    glColor4f(0.9f, 0.9f, 0.2f, 0.3f);
+
+    // Generate sphere vertices
+    std::vector<float> vertices;
+    std::vector<unsigned int> indices;
+
+    for (int i = 0; i <= segments; i++) {
+        float lat = M_PI * (-0.5f + (float)i / segments);
+        float z = radius * sin(lat);
+        float zr = radius * cos(lat);
+
+        for (int j = 0; j <= segments; j++) {
+            float lng = 2 * M_PI * (float)j / segments;
+            float x = cos(lng) * zr;
+            float y = sin(lng) * zr;
+
+            vertices.push_back(x);
+            vertices.push_back(y);
+            vertices.push_back(z);
         }
     }
 
-    // Avoid division by zero
-    if (maxDensity < 0.001f) maxDensity = 1.0f;
+    // Draw sphere as quads
+    glBegin(GL_QUADS);
+    for (int i = 0; i < segments; i++) {
+        for (int j = 0; j < segments; j++) {
+            int first = (i * (segments + 1)) + j;
+            int second = first + segments + 1;
 
-    // Draw density visualization: black (low) to white (high)
-    for (int i = 1; i <= grid.CellCountX; ++i) {
-        for (int j = 1; j <= grid.CellCountY; ++j) {
-            float x1 = startX + i * cellSize;
-            float y1 = startY + j * cellSize;
-            float x2 = x1 + cellSize;
-            float y2 = y1 + cellSize;
-
-            // Normalize density to [0, 1]
-            float normalizedDensity = grid.d[i][j] / maxDensity;
-            normalizedDensity = std::clamp(normalizedDensity, 0.0f, 1.0f);
-
-            // Map to grayscale: 0 (black) to 255 (white)
-            int gray = (int)(normalizedDensity * 255);
-            ImU32 color = IM_COL32(gray, gray, gray, 255);
-
-            draw_list->AddRectFilled(ImVec2(x1, y1), ImVec2(x2, y2), color);
+            glVertex3f(vertices[first*3], vertices[first*3+1], vertices[first*3+2]);
+            glVertex3f(vertices[second*3], vertices[second*3+1], vertices[second*3+2]);
+            glVertex3f(vertices[second*3+3], vertices[second*3+4], vertices[second*3+5]);
+            glVertex3f(vertices[first*3+3], vertices[first*3+4], vertices[first*3+5]);
         }
     }
+    glEnd();
+
+    glPopMatrix();
 }
 
-void drawGridLines(ImDrawList* draw_list, const Grid& grid, float cellSize,
-                   float startX, float startY, float gridWidth, float gridHeight) {
-    // Vertical lines
-    for (int i = 0; i <= grid.CellCountX + 2; ++i) {
-        float x = startX + i * cellSize;
-        bool isWall = (i == 0 || i == grid.CellCountX + 2);
-        float thickness = isWall ? WALL_THICKNESS : INNER_LINE_THICKNESS;
-        ImU32 color = isWall ? WALL_COLOR : INNER_LINE_COLOR;
+void Graphics::drawArrow(float x1, float y1, float z1, float x2, float y2, float z2, float r, float g, float b) {
+    // Calculate direction
+    float dx = x2 - x1;
+    float dy = y2 - y1;
+    float dz = z2 - z1;
+    float length = std::sqrt(dx*dx + dy*dy + dz*dz);
 
-        draw_list->AddLine(
-            ImVec2(x, startY),
-            ImVec2(x, startY + gridHeight),
-            color, thickness
-        );
+    if (length < 0.001f) return; // Too short to draw
+
+    // Normalize
+    dx /= length;
+    dy /= length;
+    dz /= length;
+
+    // Arrow parameters
+    float arrowHeadLength = std::min(length * 0.3f, 0.5f);
+    float arrowHeadWidth = arrowHeadLength * 0.4f;
+
+    // Calculate arrow head base position
+    float baseX = x2 - dx * arrowHeadLength;
+    float baseY = y2 - dy * arrowHeadLength;
+    float baseZ = z2 - dz * arrowHeadLength;
+
+    glDisable(GL_LIGHTING);
+    glColor3f(r, g, b);
+    glLineWidth(2.0f);
+
+    // Draw shaft
+    glBegin(GL_LINES);
+    glVertex3f(x1, y1, z1);
+    glVertex3f(baseX, baseY, baseZ);
+    glEnd();
+
+    // Draw arrow head (simplified cone as lines)
+    // Find perpendicular vectors for the cone base
+    float perpX, perpY, perpZ;
+    if (std::abs(dx) < 0.9f) {
+        perpX = dy;
+        perpY = -dx;
+        perpZ = 0;
+    } else {
+        perpX = 0;
+        perpY = dz;
+        perpZ = -dy;
     }
+    float perpLen = std::sqrt(perpX*perpX + perpY*perpY + perpZ*perpZ);
+    perpX = (perpX / perpLen) * arrowHeadWidth;
+    perpY = (perpY / perpLen) * arrowHeadWidth;
+    perpZ = (perpZ / perpLen) * arrowHeadWidth;
 
-    // Horizontal lines
-    for (int i = 0; i <= grid.CellCountY + 2; ++i) {
-        float y = startY + i * cellSize;
-        bool isWall = (i == 0 || i == grid.CellCountY + 2);
-        float thickness = isWall ? WALL_THICKNESS : INNER_LINE_THICKNESS;
-        ImU32 color = isWall ? WALL_COLOR : INNER_LINE_COLOR;
+    // Draw cone approximation (4 triangular faces)
+    glBegin(GL_LINES);
+    for (int i = 0; i < 4; i++) {
+        float angle = i * 3.14159f / 2.0f;
+        float cos_a = std::cos(angle);
+        float sin_a = std::sin(angle);
 
-        draw_list->AddLine(
-            ImVec2(startX, y),
-            ImVec2(startX + gridWidth, y),
-            color, thickness
-        );
+        // Rotate perpendicular vector
+        float px = baseX + perpX * cos_a;
+        float py = baseY + perpY * cos_a;
+        float pz = baseZ + perpZ * sin_a;
+
+        // Line from base point to tip
+        glVertex3f(px, py, pz);
+        glVertex3f(x2, y2, z2);
+
+        // Line to next base point
+        float angle2 = (i + 1) * 3.14159f / 2.0f;
+        float cos_a2 = std::cos(angle2);
+        float sin_a2 = std::sin(angle2);
+        float px2 = baseX + perpX * cos_a2;
+        float py2 = baseY + perpY * cos_a2;
+        float pz2 = baseZ + perpZ * sin_a2;
+
+        glVertex3f(px, py, pz);
+        glVertex3f(px2, py2, pz2);
     }
+    glEnd();
+
+    glEnable(GL_LIGHTING);
 }
 
-void drawFlowVectors(ImDrawList* draw_list, const Grid& grid, float cellSize,
-                     float startX, float startY) {
-    // Draw arrows at cell centers using interpolated velocities
-    for (int i = 1; i <= grid.CellCountX; ++i) {
-        for (int j = 1; j <= grid.CellCountY; ++j) {
-            // Calculate cell center position
-            float cx = startX + (i + 0.5f) * cellSize;
-            float cy = startY + (j + 0.5f) * cellSize;
+void Graphics::setupPerspective(int width, int height) {
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
 
-            // Interpolate velocities to cell center
-            float u_center = 0.5f * (grid.u[i-1][j] + grid.u[i][j]);
-            float v_center = 0.5f * (grid.v[i][j-1] + grid.v[i][j]);
+    float aspect = (float)width / (float)height;
+    float nearPlane = 1.0f;
+    float farPlane = 500.0f;
+    float fieldOfView = 60.0f;
+    float fH = tan(fieldOfView / 360.0f * 3.14159f) * nearPlane;
+    float fW = fH * aspect;
 
-            // Calculate magnitude
-            float magnitude = std::sqrt(u_center * u_center + v_center * v_center);
-
-            if (magnitude > FLOW_THRESHOLD) {
-                // Normalize direction
-                float dirX = u_center / magnitude;
-                float dirY = v_center / magnitude;
-
-                // Scale arrow length based on magnitude
-                float maxLength = ARROW_MAX_LENGTH_RATIO * cellSize;
-                float arrowLength = std::min(magnitude, 1.0f) * maxLength;
-
-                // Calculate arrow end point
-                float ex = cx + dirX * arrowLength;
-                float ey = cy + dirY * arrowLength;
-
-                // Arrow head size scales with magnitude
-                float arrowHeadSize = ARROW_BASE_HEAD_SIZE * (0.5f + 0.5f * std::min(magnitude, 1.0f));
-
-                // Color gradient from low (blue) to high (red) intensity
-                float intensity = std::min(magnitude, 1.0f);
-                int r = (int)(ARROW_COLOR_LOW_R + intensity * (ARROW_COLOR_HIGH_R - ARROW_COLOR_LOW_R));
-                int g = (int)(ARROW_COLOR_LOW_G + intensity * (ARROW_COLOR_HIGH_G - ARROW_COLOR_LOW_G));
-                int b = (int)(ARROW_COLOR_LOW_B + intensity * (ARROW_COLOR_HIGH_B - ARROW_COLOR_LOW_B));
-                ImU32 color = IM_COL32(r, g, b, (int)(intensity * 200 + 55));
-
-                // Line width scales with magnitude
-                float lineWidth = ARROW_MIN_WIDTH + intensity * (ARROW_MAX_WIDTH - ARROW_MIN_WIDTH);
-
-                // Draw arrow shaft
-                draw_list->AddLine(ImVec2(cx, cy), ImVec2(ex, ey), color, lineWidth);
-
-                // Calculate arrow head points
-                float perpX = -dirY;
-                float perpY = dirX;
-
-                ImVec2 tip(ex, ey);
-                ImVec2 wing1(ex - dirX * arrowHeadSize + perpX * arrowHeadSize * 0.5f,
-                            ey - dirY * arrowHeadSize + perpY * arrowHeadSize * 0.5f);
-                ImVec2 wing2(ex - dirX * arrowHeadSize - perpX * arrowHeadSize * 0.5f,
-                            ey - dirY * arrowHeadSize - perpY * arrowHeadSize * 0.5f);
-
-                draw_list->AddTriangleFilled(tip, wing1, wing2, color);
-            }
-        }
-    }
+    glFrustum(-fW, fW, -fH, fH, nearPlane, farPlane);
 }
 
-void addDensityAtMouse(Grid& grid, float mouseX, float mouseY, float startX, float startY, float cellSize) {
-    float gridX = (mouseX - startX) / cellSize;
-    float gridY = (mouseY - startY) / cellSize;
+void Graphics::setupCamera(const CameraState& camera) {
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
 
-    if (gridX >= 1.0f && gridX <= grid.CellCountX + 1.0f &&
-        gridY >= 1.0f && gridY <= grid.CellCountY + 1.0f) {
+    glTranslatef(0.0f, 0.0f, -camera.distance);
+    glRotatef(camera.rotX, 1.0f, 0.0f, 0.0f);
+    glRotatef(camera.rotY, 0.0f, 1.0f, 0.0f);
+    glTranslatef(-(float)GRID_SIZE/2.0f, -(float)GRID_SIZE/2.0f, -(float)GRID_SIZE/2.0f);
+}
 
-        int centerI = static_cast<int>(gridX);
-        int centerJ = static_cast<int>(gridY);
+void Graphics::renderScene(Grid3D& grid, const SimulationState& state) {
+    // Draw Grid Boundary
+    drawWireframeBox((float)GRID_SIZE);
+   // drawSolidSphere(grid.sphere_x - 1.0f, grid.sphere_y - 1.0f, grid.sphere_z - 1.0f,
+   //                    grid.sphere_radius, 20);
+    //drawWireframeSphere(grid.sphere_x - 1.0f, grid.sphere_y - 1.0f, grid.sphere_z - 1.0f,
+    //                      grid.sphere_radius, 12);
 
-        // ENSURE WE STAY WITHIN DENSITY ARRAY BOUNDS
-        for (int i = std::max(1, centerI - static_cast<int>(MOUSE_RADIUS));
-             i <= std::min(grid.CellCountX, centerI + static_cast<int>(MOUSE_RADIUS));
-             ++i) {
-            for (int j = std::max(1, centerJ - static_cast<int>(MOUSE_RADIUS));
-                 j <= std::min(grid.CellCountY, centerJ + static_cast<int>(MOUSE_RADIUS));
-                 ++j) {
-
-                // ADD ARRAY BOUNDS CHECK
-                if (i < grid.d.size() && j < grid.d[0].size()) {
-                    float dist = std::sqrt((i - gridX) * (i - gridX) + (j - gridY) * (j - gridY));
-                    if (dist <= MOUSE_RADIUS) {
-                        float falloff = 1.0f - (dist / MOUSE_RADIUS);
-                        grid.d[i][j] += MOUSE_DENSITY_AMOUNT * falloff * falloff;
+    // Draw Voxels
+    if (state.showSingleLayer) {
+        // Draw only one layer
+        int layer = state.visibleLayer + 1; // +1 because our loops start from 1
+        switch (state.layerAxis) {
+            case 0: // X-axis slice
+                for(int k = 1; k <= grid.N; k++) {
+                    for(int j = 1; j <= grid.N; j++) {
+                        int i = layer;
+                        drawCell(grid, state, i, j, k);
                     }
                 }
+                break;
+            case 1: // Y-axis slice
+                for(int k = 1; k <= grid.N; k++) {
+                    for(int i = 1; i <= grid.N; i++) {
+                        int j = layer;
+                        drawCell(grid, state, i, j, k);
+                    }
+                }
+                break;
+            case 2: // Z-axis slice
+                for(int j = 1; j <= grid.N; j++) {
+                    for(int i = 1; i <= grid.N; i++) {
+                        int k = layer;
+                        drawCell(grid, state, i, j, k);
+                    }
+                }
+                break;
+        }
+    } else {
+        // Draw all cells
+        for(int k = 1; k <= grid.N; k++) {
+            for(int j = 1; j <= grid.N; j++) {
+                for(int i = 1; i <= grid.N; i++) {
+                    drawCell(grid, state, i, j, k);
+                }
             }
         }
     }
+
+    // Draw velocity vectors if enabled
+    if (state.showVelocityVectors) {
+        drawVelocityVectors(grid, state);
+    }
 }
-void addVelocityAtMouse(Grid& grid, float mouseX, float mouseY, float velX, float velY,
-                       float startX, float startY, float cellSize) {
-    // Convert mouse position to grid coordinates
-    float gridX = (mouseX - startX) / cellSize;
-    float gridY = (mouseY - startY) / cellSize;
 
-    // Check if mouse is within grid bounds (excluding walls)
-    if (gridX >= 1.0f && gridX <= grid.CellCountX + 1.0f &&
-        gridY >= 1.0f && gridY <= grid.CellCountY + 1.0f) {
+// Helper function to draw a single cell
+void Graphics::drawCell(Grid3D& grid, const SimulationState& state, int i, int j, int k) {
+    std::vector<float> color;
+    float alpha = 0.0f;
 
-        int centerI = static_cast<int>(gridX);
-        int centerJ = static_cast<int>(gridY);
+    switch (state.visMode) {
+        case SimulationState::DENSITY: {
+            float d = grid.dens[grid.P_IX(i, j, k)];
+            if (d > 0.05f) {
+                // Blue gradient: dark blue (low) -> cyan (medium) -> white (high)
+                alpha = std::min(d/100.0f, DENSITY_ALPHA_SCALE);
+                float normalized = std::min(d/200.0f, 1.0f);
 
-        // Add velocity in a circular area around the mouse
-        for (int i = std::max(1, centerI - static_cast<int>(MOUSE_RADIUS));
-             i <= std::min(grid.CellCountX, centerI + static_cast<int>(MOUSE_RADIUS));
-             ++i) {
-            for (int j = std::max(1, centerJ - static_cast<int>(MOUSE_RADIUS));
-                 j <= std::min(grid.CellCountY, centerJ + static_cast<int>(MOUSE_RADIUS));
-                 ++j) {
+                if (normalized < 0.5f) {
+                    // Dark blue to cyan
+                    float t = normalized * 2.0f;
+                    color = {0.0f, t, 1.0f, alpha};
+                } else {
+                    // Cyan to white
+                    float t = (normalized - 0.5f) * 2.0f;
+                    color = {t, 1.0f, 1.0f, alpha};
+                }
+            } else {
+                return; // Don't draw cells with very low density
+            }
+            break;
+        }
 
-                // Calculate distance from mouse center
-                float dist = std::sqrt((i - gridX) * (i - gridX) + (j - gridY) * (j - gridY));
+        case SimulationState::PRESSURE: {
+            float p_val = grid.p[grid.P_IX(i, j, k)];
+            float abs_p = std::abs(p_val);
 
-                if (dist <= MOUSE_RADIUS) {
-                    // Add more velocity closer to center (inverse square falloff)
-                    float falloff = 1.0f - (dist / MOUSE_RADIUS);
-                    float strength = falloff * falloff;
+            if (abs_p > 0.001f) {
 
-                    // Apply velocity to both u and v components
-                    grid.u[i][j] += velX * strength;
-                    grid.v[i][j] += velY * strength;
+                float normalized = std::min(abs_p / MAX_PRESSURE, 1.0f);
+
+
+                alpha = 0.3f + 0.7f * normalized;
+
+
+                float intensity = 0.5f + 0.5f * normalized;
+                color = {1.0f, 0.0f, 0.0f, alpha};
+
+            } else {
+                return;
+            }
+            break;
+        }
+        case SimulationState::DYE: {
+            float dye_val = grid.dye[grid.P_IX(i, j,k)];
+            if (dye_val > 0.05f) {
+                float normalized = std::min(dye_val / 100.0f, 1.0f);
+                alpha = std::min(normalized, 0.95f);
+
+                // Beautiful color gradient: blue -> cyan -> green -> yellow -> red
+                if (normalized < 0.25f) {
+                    float t = normalized * 4.0f;
+                    color = {0.0f, t, 1.0f, alpha};
+                } else if (normalized < 0.5f) {
+                    float t = (normalized - 0.25f) * 4.0f;
+                    color = {0.0f, 1.0f, 1.0f - t, alpha};
+                } else if (normalized < 0.75f) {
+                    float t = (normalized - 0.5f) * 4.0f;
+                    color = {t, 1.0f, 0.0f, alpha};
+                } else {
+                    float t = (normalized - 0.75f) * 4.0f;
+                    color = {1.0f, 1.0f - t, 0.0f, alpha};
+                }
+            } else {
+                return;
+            }
+            break;
+        }
+    }
+
+    drawCube((float)i + 0.5f, (float)j + 0.5f, (float)k + 0.5f,
+             0.85f, color[0], color[1], color[2], color[3]);
+}
+
+void Graphics::drawVelocityVectors(Grid3D& grid, const SimulationState& state) {
+    if (!state.showVelocityVectors) return;
+
+    for(int k = 1; k <= grid.N; k += state.vectorSkip) {
+        for(int j = 1; j <= grid.N; j += state.vectorSkip) {
+            for(int i = 1; i <= grid.N; i += state.vectorSkip) {
+                if (state.showSingleLayer) {
+                    int layer = state.visibleLayer + 1;
+                    switch (state.layerAxis) {
+                        case 0: if (i != layer) continue; break;
+                        case 1: if (j != layer) continue; break;
+                        case 2: if (k != layer) continue; break;
+                    }
+                }
+
+                std::vector<float> vel = grid.getVelocityAtCellCenter(i, j, k);
+                float vx = vel[0];
+                float vy = vel[1];
+                float vz = vel[2];
+                float mag = std::sqrt(vx*vx + vy*vy + vz*vz);
+
+                if (mag > state.minVelocityThreshold) {
+                    float centerX = (float)i + 0.5f;
+                    float centerY = (float)j + 0.5f;
+                    float centerZ = (float)k + 0.5f;
+                    float scale = state.vectorScale;
+                    float endX = centerX + vx * scale;
+                    float endY = centerY + vy * scale;
+                    float endZ = centerZ + vz * scale;
+
+                    float normalized = std::min(mag / MAX_VELOCITY, 1.0f);
+                    float r = normalized;
+                    float g = 0.7f;
+                    float b = 1.0f - normalized;
+
+                    drawArrow(centerX, centerY, centerZ, endX, endY, endZ, r, g, b);
                 }
             }
         }
     }
 }
 
-void renderControlPanel(Grid& grid, bool& simulationRunning, float& timeStep, float& diffusionRate, float& viscosity,
-                       bool& showArrows, const ImGuiIO& io, float startX, float startY, float cellSize) {
-    ImGui::SetNextWindowPos(ImVec2(30, 30), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(400, 450), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Fluid Simulation Controls", nullptr, ImGuiWindowFlags_NoCollapse);
 
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.9f, 0.9f, 0.95f, 1.0f));
+void Input::handleCameraInput(CameraState& camera) {
+    if (!ImGui::GetIO().WantCaptureMouse) {
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+            ImVec2 mousePos = ImGui::GetMousePos();
+            if (!camera.isDragging) {
+                camera.isDragging = true;
+                camera.lastMousePos = mousePos;
+            }
+            float dx = mousePos.x - camera.lastMousePos.x;
+            float dy = mousePos.y - camera.lastMousePos.y;
+            camera.rotY += dx * 0.5f;
+            camera.rotX += dy * 0.5f;
+            camera.lastMousePos = mousePos;
+        } else {
+            camera.isDragging = false;
+        }
 
-    ImGui::Text("Grid Configuration: %dx%d cells", grid.CellCountX, grid.CellCountY);
-    ImGui::Text("Cell Size: %.1f px (auto-fitted)", grid.cellDisplaySize);
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImGui::Text("Visualization:");
-    ImGui::Checkbox("Show Velocity Arrows", &showArrows);
-    ImGui::Indent();
-    ImGui::Text("Density: Black (low) → White (high)");
-    ImGui::Text("Arrows: Blue (slow) → Red (fast)");
-    ImGui::Unindent();
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImGui::Text("Simulation Parameters:");
-    ImGui::SliderFloat("Time Step", &timeStep, 0.01f, 0.5f, "%.3f");
-    ImGui::SliderFloat("Diffusion Rate", &diffusionRate, 0.0f, 0.1f, "%.4f");
-    ImGui::SliderFloat("Viscosity", &viscosity, 0.0f, 0.1f, "%.4f");
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImGui::Text("Controls:");
-
-    // Simulation control buttons
-    if (ImGui::Button(simulationRunning ? "Pause Simulation" : "Start Simulation", ImVec2(180, 35))) {
-        simulationRunning = !simulationRunning;
+        camera.distance -= ImGui::GetIO().MouseWheel * 5.0f;
+        if (camera.distance < 5.0f) camera.distance = 5.0f;
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Step Once", ImVec2(180, 35))) {
-        // Single simulation step
-        grid.vel_step(viscosity, timeStep);
-        grid.density_step(diffusionRate, timeStep);
-    }
-
-    if (ImGui::Button("Randomize Density", ImVec2(180, 35))) {
-        grid.initializeDensity();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Clear Density", ImVec2(180, 35))) {
-        grid.clearDensity();
-    }
-
-    ImGui::Spacing();
-    if (ImGui::Button("Randomize Velocities", ImVec2(180, 35))) {
-        grid.initializeRandomVelocities();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Clear Velocities", ImVec2(180, 35))) {
-        grid.resetVelocities();
-    }
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImGui::Text("Mouse Interaction:");
-    ImGui::Text("Left Click: Add density");
-    ImGui::Text("Right Click + Drag: Add velocity");
-    ImGui::Text("Grid Area: (%.0f, %.0f) to (%.0f, %.0f)",
-                startX, startY, startX + (grid.CellCountX + 2) * cellSize, startY + (grid.CellCountY + 2) * cellSize);
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    ImGui::Text("Performance");
-    ImGui::Text("FPS: %.1f", io.Framerate);
-
-    ImGui::PopStyleColor();
-    ImGui::End();
 }
 
-// =============================================================================
-// Main Program
-// =============================================================================
+void Input::handleMouseInteraction3D(GLFWwindow* window,
+                                     Grid3D& grid,
+                                     SimulationState& state,
+                                     const CameraState& camera)
+{
+    if (ImGui::GetIO().WantCaptureMouse) return;
+    if (!state.showSingleLayer) return;
 
-int main() {
-    // Initialize GLFW
+    int width, height;
+    glfwGetFramebufferSize(window, &width, &height);
+
+    bool ctrlPressed =
+        glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
+        glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
+
+    if (!ctrlPressed || !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        state.isAddingForce = false;
+        return;
+    }
+
+    ImVec2 mousePos = ImGui::GetMousePos();
+
+    if (!state.isAddingForce) {
+        state.isAddingForce = true;
+        state.lastInteractionPos = mousePos;
+        return;
+    }
+
+    float dx = mousePos.x - state.lastInteractionPos.x;
+    float dy = mousePos.y - state.lastInteractionPos.y;
+
+    float velScale = 0.05f;
+    float vx =  dx * velScale;
+    float vy = -dy * velScale;
+    float vz = 0.0f;
+
+    float nx = mousePos.x / width;
+    float ny = mousePos.y / height;
+
+    int i = int(nx * grid.N) + 1;
+    int j = int((1.0f - ny) * grid.N) + 1;
+    int k = state.visibleLayer + 1;
+
+    if (i < 1 || i > grid.N ||
+        j < 1 || j > grid.N ||
+        k < 1 || k > grid.N)
+        return;
+
+    switch (state.layerAxis) {
+        case 0: // X slice
+            std::swap(i, k);
+            vx = 0.0f;
+            break;
+        case 1: // Y slice
+            std::swap(j, k);
+            vy = 0.0f;
+            break;
+        case 2: // Z slice
+            vz = 0.0f;
+            break;
+    }
+
+    if (state.addVelocity)
+        grid.add_velocity(i, j, k, vx, vy, vz);
+
+    if (state.addDye)
+        grid.add_dye(i, j, k, 100.0f);
+
+    state.lastInteractionPos = mousePos;
+}
+
+
+
+
+void UI::setupImGui(GLFWwindow* window) {
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    (void)io;
+
+    if (!ImGui_ImplGlfw_InitForOpenGL(window, true)) {
+        std::cerr << "Failed to initialize ImGui GLFW backend" << std::endl;
+        return;
+    }
+
+    const char* glsl_version = "#version 130";
+    if (!ImGui_ImplOpenGL3_Init(glsl_version)) {
+        glsl_version = "#version 120";
+        if (!ImGui_ImplOpenGL3_Init(glsl_version)) {
+            std::cerr << "Failed to initialize ImGui OpenGL3 backend" << std::endl;
+            return;
+        }
+    }
+
+    ImGui::StyleColorsDark();
+}
+
+void UI::renderImGui(Grid3D& grid, SimulationState& state, CameraState& camera) {
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+
+    ImGui::Begin("3D Fluid Controls");
+
+    // FPS and stats
+    ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+    ImGui::Text("Grid: %d^3 cells", grid.N);
+
+    // Simulation controls
+    ImGui::Separator();
+    ImGui::Text("Simulation Control:");
+    ImGui::Checkbox("Running", &state.isRunning);
+    ImGui::SameLine();
+    if (ImGui::Button("Single Step")) {
+        grid.step();
+    }
+
+    // Timestep parameters
+    ImGui::Separator();
+    ImGui::Text("Simulation Parameters:");
+    ImGui::SliderFloat("Time Step (dt)", &state.dt, 0.001f, 0.1f, "%.4f");
+    ImGui::SliderFloat("Viscosity", &state.visc, 0.0f, 0.1f, "%.4f");
+    ImGui::SliderFloat("Density Diffusion", &state.diff, 0.0f, 0.1f, "%.4f");
+
+    // Visualization mode selection
+    ImGui::Separator();
+    ImGui::Text("Visualization:");
+
+    if (ImGui::RadioButton("Density Field", state.visMode == SimulationState::DENSITY)) {
+        state.visMode = SimulationState::DENSITY;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Pressure Field", state.visMode == SimulationState::PRESSURE)) {
+        state.visMode = SimulationState::PRESSURE;
+    }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Dye", state.visMode == SimulationState::DYE)) {
+        state.visMode = SimulationState::DYE;
+    }
+
+    // Show color scheme info
+    ImGui::Separator();
+    ImGui::Text("Color Scheme:");
+    if (state.visMode == SimulationState::DENSITY) {
+        ImGui::TextColored(ImVec4(0, 0, 1, 1), "Blue: Low density");
+        ImGui::TextColored(ImVec4(0, 1, 1, 1), "Cyan: Medium density");
+        ImGui::TextColored(ImVec4(1, 1, 1, 1), "White: High density");
+    } else if(state.visMode == SimulationState::PRESSURE)  {
+        ImGui::TextColored(ImVec4(1, 0, 0, 0.3f), "Transparent Red: Low pressure");
+        ImGui::TextColored(ImVec4(1, 0, 0, 1.0f), "Opaque Red: High pressure");
+    }else {
+        ImGui::TextColored(ImVec4(0, 0, 1, 1), "Blue -> Cyan -> Green -> Yellow -> Red");
+        ImGui::Text("(Based on dye concentration)");
+    }
+
+    // Vector visualization (optional overlay)
+    ImGui::Separator();
+    ImGui::Text("Overlay:");
+    ImGui::Checkbox("Show Velocity Vectors", &state.showVelocityVectors);
+
+    if (state.showVelocityVectors) {
+        ImGui::SliderFloat("Vector Scale", &state.vectorScale, 0.1f, 20.0f);
+        ImGui::SliderInt("Vector Skip", &state.vectorSkip, 1, 5);
+        ImGui::SliderFloat("Min Velocity", &state.minVelocityThreshold, 0.0f, 1.0f);
+    }
+
+    // Layer visualization controls
+    ImGui::Separator();
+    ImGui::Text("Slice View:");
+    ImGui::Checkbox("Show Single Layer", &state.showSingleLayer);
+
+    if (state.showSingleLayer) {
+        ImGui::SliderInt("Layer", &state.visibleLayer, 0, grid.N-1);
+
+        ImGui::Text("Slice Axis:");
+        ImGui::RadioButton("X", &state.layerAxis, 0);
+        ImGui::SameLine();
+        ImGui::RadioButton("Y", &state.layerAxis, 1);
+        ImGui::SameLine();
+        ImGui::RadioButton("Z", &state.layerAxis, 2);
+    }
+
+    // Velocity initialization controls
+    ImGui::Separator();
+    ImGui::Text("Initialization:");
+
+    if (ImGui::Button("Clear All")) {
+        grid.clearAllVelocities();
+        std::fill(grid.dens.begin(), grid.dens.end(), 0.0f);
+        std::fill(grid.p.begin(), grid.p.end(), 0.0f);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Random Velocities")) {
+        grid.initRandomStaggeredVelocities(1.0f);
+    }\
+    ImGui::Separator();
+    ImGui::Text("Slice Interaction:");
+    ImGui::TextColored(ImVec4(0.5f,1.0f,0.5f,1),
+        "CTRL + Left Mouse: Add to active slice");
+
+    ImGui::Checkbox("Add Velocity", &state.addVelocity);
+    ImGui::Checkbox("Add Dye", &state.addDye);
+
+
+    // Camera controls
+    ImGui::Separator();
+    ImGui::Text("Camera:");
+    ImGui::SliderFloat("Rotation X", &camera.rotX, -180.0f, 180.0f);
+    ImGui::SliderFloat("Rotation Y", &camera.rotY, -180.0f, 180.0f);
+    ImGui::SliderFloat("Distance", &camera.distance, 5.0f, 500.0f);
+
+    if (ImGui::Button("Reset Camera")) {
+        camera.rotX = 30.0f;
+        camera.rotY = -45.0f;
+        camera.distance = 15.0f;
+    }
+
+    // Statistics
+    ImGui::Separator();
+    ImGui::Text("Statistics:");
+
+    // Compute some statistics
+    float maxVel = 0.0f;
+    float maxDens = 0.0f;
+    float maxPress = 0.0f;
+
+    for (int i = 0; i < grid.u.size(); i++) {
+        if (fabs(grid.u[i]) > maxVel) maxVel = fabs(grid.u[i]);
+    }
+    for (int i = 0; i < grid.v.size(); i++) {
+        if (fabs(grid.v[i]) > maxVel) maxVel = fabs(grid.v[i]);
+    }
+    for (int i = 0; i < grid.w.size(); i++) {
+        if (fabs(grid.w[i]) > maxVel) maxVel = fabs(grid.w[i]);
+    }
+
+    for (int i = 0; i < grid.dens.size(); i++) {
+        if (grid.dens[i] > maxDens) maxDens = grid.dens[i];
+    }
+
+    for (int i = 0; i < grid.p.size(); i++) {
+        if (fabs(grid.p[i]) > maxPress) maxPress = fabs(grid.p[i]);
+    }
+
+    ImGui::Text("Max Velocity: %.4f", maxVel);
+    ImGui::Text("Max Density: %.2f", maxDens);
+    ImGui::Text("Max Pressure: %.4f", maxPress);
+
+    // Reset button
+    ImGui::Separator();
+    if (ImGui::Button("Reset Everything")) {
+        grid = Grid3D(GRID_SIZE, state.diff, state.visc, state.dt);
+        state.isRunning = false;
+        state.visMode = SimulationState::DENSITY;
+    }
+
+    ImGui::End();
+
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+}
+
+
+GLFWwindow* App::initializeWindow() {
     if (!glfwInit()) {
         std::cerr << "Failed to initialize GLFW" << std::endl;
-        return -1;
+        return nullptr;
     }
 
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_SAMPLES, 4);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 
-    GLFWwindow* window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE, nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(
+        WINDOW_WIDTH,
+        WINDOW_HEIGHT,
+        "3D Fluid Simulation - Density & Pressure",
+        NULL, NULL
+    );
+
     if (!window) {
-        std::cerr << "Failed to create GLFW window" << std::endl;
         glfwTerminate();
-        return -1;
+        return nullptr;
     }
 
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
 
-    // Initialize ImGui
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO();
-    io.FontGlobalScale = UI_FONT_SCALE;
-
-    ImGui::StyleColorsDark();
-    initializeImGuiStyle();
-
-    if (!ImGui_ImplGlfw_InitForOpenGL(window, true)) {
-        std::cerr << "Failed to initialize ImGui GLFW backend" << std::endl;
-        return -1;
+    glewExperimental = GL_TRUE;
+    if (glewInit() != GLEW_OK) {
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return nullptr;
     }
 
-    if (!ImGui_ImplOpenGL3_Init("#version 330")) {
-        std::cerr << "Failed to initialize ImGui OpenGL backend" << std::endl;
-        return -1;
-    }
+    return window;
+}
 
-    // Initialize simulation grid
-    Grid grid(GRID_COLS, GRID_ROWS, 1.0f);
+void App::initializeGraphics() {
+    glEnable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    // Calculate cell size to fit window perfectly
-    float cellSize = calculateCellSize(WINDOW_WIDTH, WINDOW_HEIGHT, GRID_COLS, GRID_ROWS);
-    grid.cellDisplaySize = cellSize;
+    glEnable(GL_LIGHT0);
+    glEnable(GL_LIGHTING);
+    glEnable(GL_COLOR_MATERIAL);
+    glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
 
-    // Simulation state
-    bool simulationRunning = false;
-    bool showArrows = true;
+    // Set up a simple light
+    float lightPos[] = {10.0f, 10.0f, 10.0f, 1.0f};
+    glLightfv(GL_LIGHT0, GL_POSITION, lightPos);
 
-    // Mouse drag tracking for velocity
-    bool isRightDragging = false;
-    ImVec2 lastMousePos = ImVec2(0, 0);
+    float lightAmbient[] = {0.2f, 0.2f, 0.2f, 1.0f};
+    float lightDiffuse[] = {0.8f, 0.8f, 0.8f, 1.0f};
+    glLightfv(GL_LIGHT0, GL_AMBIENT, lightAmbient);
+    glLightfv(GL_LIGHT0, GL_DIFFUSE, lightDiffuse);
+}
 
-    // Simulation parameters with default values
-    float timeStep = TIME_STEP;
-    float diffusionRate = DIFFUSION_RATE;
-    float viscosity = VISCOSITY;
-
-    // Main loop
+void App::mainLoop(GLFWwindow* window, Grid3D& grid, CameraState& camera, SimulationState& state) {
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
 
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
+        // Handle input
+        Input::handleCameraInput(camera);
+        Input::handleMouseInteraction3D(window, grid, state, camera);
+        // Update simulation
+        grid.dt = state.dt;
+        grid.diff = state.diff;
+        grid.visc = state.visc;
 
-        // Get window size and setup viewport
+        if (state.isRunning) {
+            grid.step();
+        }
+
+        // Get window dimensions
         int display_w, display_h;
         glfwGetFramebufferSize(window, &display_w, &display_h);
         glViewport(0, 0, display_w, display_h);
-        glClearColor(0.95f, 0.96f, 0.97f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
 
-        ImDrawList* draw_list = ImGui::GetBackgroundDrawList();
+        // Clear screen
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // Calculate grid dimensions and centering
-        float gridWidth = (GRID_COLS + 2) * cellSize;
-        float gridHeight = (GRID_ROWS + 2) * cellSize;
-        float startX = (display_w - gridWidth) / 2.0f;
-        float startY = (display_h - gridHeight) / 2.0f;
+        // Setup view
+        Graphics::setupPerspective(display_w, display_h);
+        Graphics::setupCamera(camera);
 
-        // Handle mouse input
-        ImVec2 currentMousePos = ImGui::GetMousePos();
-
-        // Left click - add density
-        if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::GetIO().WantCaptureMouse) {
-            addDensityAtMouse(grid, currentMousePos.x, currentMousePos.y, startX, startY, cellSize);
-        }
-
-        // Right click drag - add velocity
-        if (ImGui::IsMouseDown(ImGuiMouseButton_Right) && !ImGui::GetIO().WantCaptureMouse) {
-            if (!isRightDragging) {
-                // Start dragging
-                isRightDragging = true;
-                lastMousePos = currentMousePos;
-            } else {
-                // Calculate drag velocity (direction and magnitude)
-                float dragX = currentMousePos.x - lastMousePos.x;
-                float dragY = currentMousePos.y - lastMousePos.y;
-
-                // Normalize and scale by strength
-                float length = std::sqrt(dragX * dragX + dragY * dragY);
-                if (length > 0.1f) {  // Minimum drag threshold
-                    dragX = (dragX / length) * MOUSE_VELOCITY_STRENGTH;
-                    dragY = (dragY / length) * MOUSE_VELOCITY_STRENGTH;
-
-                    addVelocityAtMouse(grid, currentMousePos.x, currentMousePos.y, dragX, dragY, startX, startY, cellSize);
-                }
-
-                lastMousePos = currentMousePos;
-            }
-        } else {
-            isRightDragging = false;
-        }
-
-        // Run simulation step if running
-        if (simulationRunning) {
-            // Full fluid simulation (both velocity and density)
-            grid.vel_step(viscosity, timeStep);
-            grid.density_step(diffusionRate, timeStep);
-        }
-
-        // Render grid components
-        drawCellBackgrounds(draw_list, grid, cellSize, startX, startY);
-        drawGridLines(draw_list, grid, cellSize, startX, startY, gridWidth, gridHeight);
-
-        // Draw velocity arrows if enabled
-        if (showArrows) {
-            drawFlowVectors(draw_list, grid, cellSize, startX, startY);
-        }
+        // Render 3D scene
+        Graphics::renderScene(grid, state);
 
         // Render UI
-        renderControlPanel(grid, simulationRunning, timeStep, diffusionRate, viscosity,
-                          showArrows, io, startX, startY, cellSize);
+        UI::renderImGui(grid, state, camera);
 
-        ImGui::Render();
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        // Swap buffers
         glfwSwapBuffers(window);
     }
+}
 
-    // Cleanup
+void App::shutdown(GLFWwindow* window) {
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
+
     glfwDestroyWindow(window);
     glfwTerminate();
+}
 
+// --- Main Function ---
+int main() {
+    // Initialize window
+    GLFWwindow* window = App::initializeWindow();
+    if (!window) {
+        return -1;
+    }
+
+    // Setup ImGui
+    UI::setupImGui(window);
+
+    // Setup graphics
+    App::initializeGraphics();
+
+    // Create simulation grid
+    Grid3D grid(GRID_SIZE, 0.001f, 0.001f, 0.1f);
+
+    // Initialize state
+    CameraState camera;
+    SimulationState state;
+
+    // Run main loop
+    App::mainLoop(window, grid, camera, state);
+
+    // Cleanup
+    App::shutdown(window);
     return 0;
 }

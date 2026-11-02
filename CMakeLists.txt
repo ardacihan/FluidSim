@@ -2,27 +2,42 @@ cmake_minimum_required(VERSION 3.26)
 project(FluidSim)
 
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Set paths to your libraries
+# The solver is ~10x slower at -O0, so default to an optimized build.
+if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif ()
+
+# Keep Debug builds usable (they stay debuggable thanks to -g).
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O2")
+
+# Paths
 set(GLFW_DIR ${CMAKE_CURRENT_SOURCE_DIR}/glfw-3.4)
 set(GLEW_DIR ${CMAKE_CURRENT_SOURCE_DIR}/glew-2.1.0)
 set(IMGUI_DIR ${CMAKE_CURRENT_SOURCE_DIR}/imgui)
 
-# Build GLFW from source
-set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-add_subdirectory(${GLFW_DIR})
+# Build GLFW
+if(EXISTS ${GLFW_DIR}/CMakeLists.txt)
+    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    add_subdirectory(${GLFW_DIR})
+    set(GLFW_LIB glfw)
+else()
+    message(FATAL_ERROR "GLFW not found")
+endif()
 
-# Include directories
+# Include dirs
 include_directories(
         ${GLFW_DIR}/include
         ${GLEW_DIR}/include
         ${IMGUI_DIR}
         ${IMGUI_DIR}/backends
+        ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-# ImGui source files
+# ImGui sources
 set(IMGUI_SOURCES
         ${IMGUI_DIR}/imgui.cpp
         ${IMGUI_DIR}/imgui_draw.cpp
@@ -32,26 +47,40 @@ set(IMGUI_SOURCES
         ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
 )
 
-# GLEW source files (build from source)
-set(GLEW_SOURCES
-        ${GLEW_DIR}/src/glew.c
-)
-
-# Define GLEW_STATIC to use static linking
+# GLEW
+set(GLEW_SOURCES ${GLEW_DIR}/src/glew.c)
 add_definitions(-DGLEW_STATIC)
 
-# Your application
+# Executable
 add_executable(FluidSim
         main.cpp
+        main2d.cpp
+        Grid2D.h
         ${IMGUI_SOURCES}
         ${GLEW_SOURCES}
-        Grid.h
-        Grid.cpp
 )
 
 # Link libraries
-target_link_libraries(FluidSim
-        glfw
-        opengl32
-        gdi32
+if (WIN32)
+    target_link_libraries(FluidSim
+            ${GLFW_LIB}
+            opengl32
+            glu32
+            gdi32
+            user32
+            shell32
+    )
+else ()
+    find_package(OpenGL REQUIRED)
+    target_link_libraries(FluidSim
+            ${GLFW_LIB}
+            OpenGL::GL
+            ${CMAKE_DL_LIBS}
+    )
+endif ()
+
+# ImGui OpenGL backend
+target_compile_definitions(FluidSim PRIVATE
+        IMGUI_IMPL_OPENGL_LOADER_GLEW
+        GLEW_STATIC
 )
