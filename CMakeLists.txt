@@ -4,6 +4,14 @@ project(FluidSim)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# The solver is ~10x slower at -O0, so default to an optimized build.
+if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif ()
+
+# Keep Debug builds usable (they stay debuggable thanks to -g).
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O2")
+
 # Paths
 set(GLFW_DIR ${CMAKE_CURRENT_SOURCE_DIR}/glfw-3.4)
 set(GLEW_DIR ${CMAKE_CURRENT_SOURCE_DIR}/glew-2.1.0)
@@ -53,14 +61,23 @@ add_executable(FluidSim
 )
 
 # Link libraries
-target_link_libraries(FluidSim
-        ${GLFW_LIB}
-        opengl32
-        glu32
-        gdi32
-        user32
-        shell32
-)
+if (WIN32)
+    target_link_libraries(FluidSim
+            ${GLFW_LIB}
+            opengl32
+            glu32
+            gdi32
+            user32
+            shell32
+    )
+else ()
+    find_package(OpenGL REQUIRED)
+    target_link_libraries(FluidSim
+            ${GLFW_LIB}
+            OpenGL::GL
+            ${CMAKE_DL_LIBS}
+    )
+endif ()
 
 # ImGui OpenGL backend
 target_compile_definitions(FluidSim PRIVATE

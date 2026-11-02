@@ -610,45 +610,45 @@ private:
         set_bnd(0, div, N+2, N+2);
 
         float h_squared = h * h;
-        int num_iterations = 100;
-        float sor_factor = 1.9f;
+        // 20 red-black SOR sweeps converge this grid visually as well as 100 did.
+        const int num_iterations = 20;
+        const float sor_factor = 1.9f;
 
-        // Solve Poisson equation with red-black ordering
+        set_bnd(0, pressure, N+2, N+2);
+
+        // Solve Poisson equation with red-black ordering. Each parity is visited
+        // with a stride of 2 so we never scan cells that this pass must skip.
         for (int iter = 0; iter < num_iterations; iter++) {
-            // Red cells
-            #pragma omp parallel for collapse(2)
+            // Red cells: (i + j) even.
+            #pragma omp parallel for
             for (int j = 1; j <= N; j++) {
-                for (int i = 1; i <= N; i++) {
-                    if ((i + j) % 2 == 0) {
-                        int idx = P_IX(i, j);
+                for (int i = (j & 1) ? 1 : 2; i <= N; i += 2) {
+                    int idx = P_IX(i, j);
 
-                        float p_sum = pressure[P_IX(i-1, j)] + pressure[P_IX(i+1, j)] +
-                                      pressure[P_IX(i, j-1)] + pressure[P_IX(i, j+1)];
+                    float p_sum = pressure[P_IX(i-1, j)] + pressure[P_IX(i+1, j)] +
+                                  pressure[P_IX(i, j-1)] + pressure[P_IX(i, j+1)];
 
-                        float new_p = (p_sum - h_squared * div[idx]) / 4.0f;
-                        pressure[idx] = pressure[idx] + sor_factor * (new_p - pressure[idx]);
-                    }
+                    float new_p = (p_sum - h_squared * div[idx]) / 4.0f;
+                    pressure[idx] = pressure[idx] + sor_factor * (new_p - pressure[idx]);
                 }
             }
 
-            // Black cells
-            #pragma omp parallel for collapse(2)
+            // Black cells: (i + j) odd.
+            #pragma omp parallel for
             for (int j = 1; j <= N; j++) {
-                for (int i = 1; i <= N; i++) {
-                    if ((i + j) % 2 == 1) {
-                        int idx = P_IX(i, j);
+                for (int i = (j & 1) ? 2 : 1; i <= N; i += 2) {
+                    int idx = P_IX(i, j);
 
-                        float p_sum = pressure[P_IX(i-1, j)] + pressure[P_IX(i+1, j)] +
-                                      pressure[P_IX(i, j-1)] + pressure[P_IX(i, j+1)];
+                    float p_sum = pressure[P_IX(i-1, j)] + pressure[P_IX(i+1, j)] +
+                                  pressure[P_IX(i, j-1)] + pressure[P_IX(i, j+1)];
 
-                        float new_p = (p_sum - h_squared * div[idx]) / 4.0f;
-                        pressure[idx] = pressure[idx] + sor_factor * (new_p - pressure[idx]);
-                    }
+                    float new_p = (p_sum - h_squared * div[idx]) / 4.0f;
+                    pressure[idx] = pressure[idx] + sor_factor * (new_p - pressure[idx]);
                 }
             }
-
-            set_bnd(0, pressure, N+2, N+2);
         }
+
+        set_bnd(0, pressure, N+2, N+2);
 
         // Update u velocities
         #pragma omp parallel for collapse(2)
@@ -680,17 +680,6 @@ private:
 
         p = pressure;
 
-        float max_div = 0.0f;
-
-        #pragma omp parallel for collapse(2) reduction(max:max_div)
-        for (int j = 1; j <= N; j++) {
-            for (int i = 1; i <= N; i++) {
-                max_div = std::max(max_div, std::abs(div[P_IX(i, j)]));
-            }
-        }
-        if (max_div > 0.001f) {
-            std::cout << "Max divergence before projection: " << max_div << std::endl;
-        }
     }
 
     void dissipate_density(float dt, float alpha = 0.1f) {
@@ -734,26 +723,13 @@ private:
 
 
     void vel_step() {
-
-
         add_forces();
         std::copy(u.begin(), u.end(), u_old.begin());
         std::copy(v.begin(), v.end(), v_old.begin());
 
-        project(dt);
-
-
-
-
         diffuse_velocity(dt);
-
-
-
         advect_velocity(dt);
-
-
         project(dt);
-
     }
 
     void dens_step() {

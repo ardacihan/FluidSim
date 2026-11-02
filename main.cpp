@@ -923,7 +923,7 @@ void App::shutdown(GLFWwindow* window) {
 }
 
 // --- Main Function ---
-int main2() {
+int main() {
     // Initialize window
     GLFWwindow* window = App::initializeWindow();
     if (!window) {

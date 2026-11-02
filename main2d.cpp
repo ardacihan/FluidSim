@@ -6,9 +6,15 @@
 #include <iostream>
 #include <vector>
 #include <cmath>
+#include <algorithm>
+#include <cstring>
+#include <cstdlib>
+#include <string>
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "glfw-3.4/deps/stb_image_write.h"
 #include "Grid2D.h"
 
-int GRID_SIZE_2D = 64;
+int GRID_SIZE_2D = 128;
 int WINDOW_WIDTH_2D = 1280;
 int WINDOW_HEIGHT_2D = 720;
 
@@ -16,10 +22,19 @@ float MAX_PRESSURE_2D = 1.0f;
 float MAX_VELOCITY_2D = 2.0f;
 float DENSITY_ALPHA_SCALE_2D = 0.8f;
 
+// Small trivially-copyable color type: the old code returned a std::vector<float>
+// per cell, which meant a heap allocation for every cell of every frame.
+struct Color4 {
+    float r = 0.0f;
+    float g = 0.0f;
+    float b = 0.0f;
+    float a = 0.0f;
+};
+
 struct CameraState_2D {
     float zoom = 0.5f;
-    float panX = 0.0f;
-    float panY = 0.0f;
+    float panX = (GRID_SIZE_2D + 2) * 0.5f;
+    float panY = (GRID_SIZE_2D + 2) * 0.5f;
     ImVec2 lastMousePos;
     bool isPanning = false;
 };
@@ -59,17 +74,16 @@ struct SimulationState_2D {
 };
 
 namespace Graphics_2D {
-    void drawSquare(float x, float y, float size, float r, float g, float b, float alpha);
     void drawWireframeBox(float width, float height);
     void drawArrow(float x1, float y1, float x2, float y2, float r, float g, float b);
     void setupOrthographic(int width, int height, const CameraState_2D& camera);
     void renderScene(Grid2D& grid, const SimulationState_2D& state);
-    void drawCell(Grid2D& grid, const SimulationState_2D& state, int i, int j);
-    void drawCellSupersampled(Grid2D& grid, const SimulationState_2D& state, int i, int j);
+    void uploadFieldTexture(Grid2D& grid, const SimulationState_2D& state);
+    void drawFieldQuad(int n, SimulationState_2D::FidelityLevel fidelity);
     void drawVelocityVectors(Grid2D& grid, const SimulationState_2D& state);
-    std::vector<float> getDensityColor(float density);
-    std::vector<float> getPressureColor(float pressure);
-    std::vector<float> getDyeColor(float dyeValue);
+    Color4 getDensityColor(float density);
+    Color4 getPressureColor(float pressure);
+    Color4 getDyeColor(float dyeValue);
 }
 
 namespace UI_2D {
@@ -88,18 +102,6 @@ namespace App_2D {
     void initializeGraphics_2D();
     void mainLoop(GLFWwindow* window, Grid2D& grid, CameraState_2D& camera, SimulationState_2D& state);
     void shutdown(GLFWwindow* window);
-}
-
-void Graphics_2D::drawSquare(float x, float y, float size, float r, float g, float b, float alpha) {
-    glColor4f(r, g, b, alpha);
-
-    float halfSize = size * 0.5f;
-    glBegin(GL_QUADS);
-    glVertex2f(x - halfSize, y - halfSize);
-    glVertex2f(x + halfSize, y - halfSize);
-    glVertex2f(x + halfSize, y + halfSize);
-    glVertex2f(x - halfSize, y + halfSize);
-    glEnd();
 }
 
 void Graphics_2D::drawWireframeBox(float width, float height) {
@@ -171,152 +173,150 @@ void Graphics_2D::setupOrthographic(int width, int height, const CameraState_2D&
 }
 
 
-std::vector<float> Graphics_2D::getDensityColor(float density) {
-    std::vector<float> color(4, 0.0f); // RGBA
+Color4 Graphics_2D::getDensityColor(float density) {
+    Color4 color;
 
     if (density > 0.05f) {
-        float alpha = std::min(density/100.0f, DENSITY_ALPHA_SCALE_2D);
+        color.a = std::min(density/100.0f, DENSITY_ALPHA_SCALE_2D);
         float normalized = std::min(density/200.0f, 1.0f);
 
         if (normalized < 0.5f) {
             float t = normalized * 2.0f;
-            color = {0.0f, t, 1.0f, alpha};
+            color = {0.0f, t, 1.0f, color.a};
         } else {
             float t = (normalized - 0.5f) * 2.0f;
-            color = {t, 1.0f, 1.0f, alpha};
+            color = {t, 1.0f, 1.0f, color.a};
         }
     }
 
     return color;
 }
 
-std::vector<float> Graphics_2D::getPressureColor(float pressure) {
-    std::vector<float> color(4, 0.0f); // RGBA
+Color4 Graphics_2D::getPressureColor(float pressure) {
+    Color4 color;
 
     float abs_p = std::abs(pressure);
     if (abs_p > 0.001f) {
         float normalized = std::min(abs_p / MAX_PRESSURE_2D, 1.0f);
-        float alpha = 0.3f + 0.7f * normalized;
-        color = {1.0f, 0.0f, 0.0f, alpha};
+        color = {1.0f, 0.0f, 0.0f, 0.3f + 0.7f * normalized};
     }
 
     return color;
 }
 
-std::vector<float> Graphics_2D::getDyeColor(float dyeValue) {
-    std::vector<float> color(4, 0.0f); // RGBA
+Color4 Graphics_2D::getDyeColor(float dyeValue) {
+    Color4 color;
 
     if (dyeValue > 0.5f) {
         float normalized = std::min(dyeValue / 100.0f, 1.0f);
-        float alpha = std::min(normalized, 0.95f);
+        color.a = std::min(normalized, 0.95f);
 
         // Beautiful color gradient: blue -> cyan -> green -> yellow -> red
         if (normalized < 0.25f) {
             float t = normalized * 4.0f;
-            color = {0.0f, t, 1.0f, alpha};
+            color = {0.0f, t, 1.0f, color.a};
         } else if (normalized < 0.5f) {
             float t = (normalized - 0.25f) * 4.0f;
-            color = {0.0f, 1.0f, 1.0f - t, alpha};
+            color = {0.0f, 1.0f, 1.0f - t, color.a};
         } else if (normalized < 0.75f) {
             float t = (normalized - 0.5f) * 4.0f;
-            color = {t, 1.0f, 0.0f, alpha};
+            color = {t, 1.0f, 0.0f, color.a};
         } else {
             float t = (normalized - 0.75f) * 4.0f;
-            color = {1.0f, 1.0f - t, 0.0f, alpha};
+            color = {1.0f, 1.0f - t, 0.0f, color.a};
         }
     }
 
     return color;
 }
 
-void Graphics_2D::drawCell(Grid2D& grid, const SimulationState_2D& state, int i, int j) {
-    std::vector<float> color;
-    float value = 0.0f;
+// The whole field is uploaded as one RGBA texture and drawn as a single quad.
+// The GPU does the bilinear filtering, so the CPU no longer issues tens of
+// thousands of draw calls and heap allocations per frame.
+static GLuint g_fieldTexture = 0;
+static int g_fieldTextureWidth = 0;
+static int g_fieldTextureHeight = 0;
+static std::vector<unsigned char> g_fieldPixels;
 
-    switch (state.visMode) {
-        case SimulationState_2D::DENSITY: {
-            value = grid.dens[grid.P_IX(i, j)];
-            color = getDensityColor(value);
-            break;
-        }
+void Graphics_2D::uploadFieldTexture(Grid2D& grid, const SimulationState_2D& state) {
+    const int n = grid.N;
+    const int subdiv = (int)state.fidelity;
+    const int w = n * subdiv;
+    const int h = n * subdiv;
 
-        case SimulationState_2D::PRESSURE: {
-            value = grid.p[grid.P_IX(i, j)];
-            color = getPressureColor(value);
-            break;
-        }
+    g_fieldPixels.resize((size_t)w * h * 4);
 
-        case SimulationState_2D::DYE: {
-            value = grid.dye[grid.P_IX(i, j)];
-            color = getDyeColor(value);
-            break;
+    const float inv = 1.0f / (float)subdiv;
+    for (int ty = 0; ty < h; ty++) {
+        const int cellJ = std::min(n, std::max(1, ty / subdiv + 1));
+        const float y = 1.0f + (ty + 0.5f) * inv;
+
+        unsigned char* row = &g_fieldPixels[(size_t)ty * w * 4];
+        for (int tx = 0; tx < w; tx++) {
+            const int cellI = std::min(n, std::max(1, tx / subdiv + 1));
+            const float x = 1.0f + (tx + 0.5f) * inv;
+
+            Color4 color;
+            switch (state.visMode) {
+                case SimulationState_2D::DENSITY:
+                    color = getDensityColor(grid.interpolate_density(x, y));
+                    break;
+
+                case SimulationState_2D::PRESSURE:
+                    // Cell-centered field: sample it per cell instead of interpolating.
+                    color = getPressureColor(grid.p[grid.P_IX(cellI, cellJ)]);
+                    break;
+
+                case SimulationState_2D::DYE:
+                    color = getDyeColor(grid.interpolate_dye(x, y));
+                    break;
+            }
+
+            unsigned char* px = row + (size_t)tx * 4;
+            px[0] = (unsigned char)(std::min(std::max(color.r, 0.0f), 1.0f) * 255.0f);
+            px[1] = (unsigned char)(std::min(std::max(color.g, 0.0f), 1.0f) * 255.0f);
+            px[2] = (unsigned char)(std::min(std::max(color.b, 0.0f), 1.0f) * 255.0f);
+            px[3] = (unsigned char)(std::min(std::max(color.a, 0.0f), 1.0f) * 255.0f);
         }
     }
 
-    // Only draw if there's something to show
-    if (color[3] > 0.01f) {
-        drawSquare((float)i + 0.5f, (float)j + 0.5f, 0.9f,
-                   color[0], color[1], color[2], color[3]);
+    if (g_fieldTexture == 0) {
+        glGenTextures(1, &g_fieldTexture);
+        glBindTexture(GL_TEXTURE_2D, g_fieldTexture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+
+    glBindTexture(GL_TEXTURE_2D, g_fieldTexture);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    if (w != g_fieldTextureWidth || h != g_fieldTextureHeight) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     g_fieldPixels.data());
+        g_fieldTextureWidth = w;
+        g_fieldTextureHeight = h;
+    } else {
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE,
+                        g_fieldPixels.data());
     }
 }
 
-void Graphics_2D::drawCellSupersampled(Grid2D& grid, const SimulationState_2D& state, int i, int j) {
-    int subdiv = (int)state.fidelity;
+void Graphics_2D::drawFieldQuad(int n, SimulationState_2D::FidelityLevel fidelity) {
+    GLint filter = (fidelity == SimulationState_2D::LOW) ? GL_NEAREST : GL_LINEAR;
 
-    // Early out for low fidelity (original behavior)
-    if (subdiv == 1) {
-        drawCell(grid, state, i, j);
-        return;
-    }
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, g_fieldTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
 
-    // High fidelity: supersampling
-    const float cellSize = 1.0f;
-    const float subSize = cellSize / subdiv;
-    const float drawSize = subSize * 0.9f;
+    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+    glBegin(GL_QUADS);
+    glTexCoord2f(0.0f, 0.0f); glVertex2f(1.0f, 1.0f);
+    glTexCoord2f(1.0f, 0.0f); glVertex2f(1.0f + n, 1.0f);
+    glTexCoord2f(1.0f, 1.0f); glVertex2f(1.0f + n, 1.0f + n);
+    glTexCoord2f(0.0f, 1.0f); glVertex2f(1.0f, 1.0f + n);
+    glEnd();
 
-    float baseX = (float)i + 0.5f;
-    float baseY = (float)j + 0.5f;
-
-    // Use immediate mode for simplicity
-    for (int subY = 0; subY < subdiv; subY++) {
-        float subCenterY = baseY - 0.5f + (subY + 0.5f) * subSize;
-
-        for (int subX = 0; subX < subdiv; subX++) {
-            float subCenterX = baseX - 0.5f + (subX + 0.5f) * subSize;
-
-            // Get interpolated value at this sub-pixel position
-            float interpolatedValue = 0.0f;
-            std::vector<float> color(4, 0.0f);
-
-            switch (state.visMode) {
-                case SimulationState_2D::DENSITY: {
-                    interpolatedValue = grid.interpolate_density(subCenterX, subCenterY);
-                    color = getDensityColor(interpolatedValue);
-                    break;
-                }
-
-                case SimulationState_2D::PRESSURE: {
-                    // Need to add pressure interpolation to Grid2D or use cell value
-                    // For now, use cell value
-                    interpolatedValue = grid.p[grid.P_IX(i, j)];
-                    color = getPressureColor(interpolatedValue);
-                    break;
-                }
-
-                case SimulationState_2D::DYE: {
-                    interpolatedValue = grid.interpolate_dye(subCenterX, subCenterY);
-                    color = getDyeColor(interpolatedValue);
-                    break;
-                }
-            }
-
-            // Only draw if there's something to show
-            if (color[3] > 0.01f) {
-                drawSquare(subCenterX, subCenterY, drawSize,
-                           color[0], color[1], color[2], color[3]);
-            }
-        }
-    }
+    glDisable(GL_TEXTURE_2D);
 }
 
 void Graphics_2D::drawVelocityVectors(Grid2D& grid, const SimulationState_2D& state) {
@@ -346,19 +346,12 @@ void Graphics_2D::drawVelocityVectors(Grid2D& grid, const SimulationState_2D& st
 }
 
 void Graphics_2D::renderScene(Grid2D& grid, const SimulationState_2D& state) {
-    // Draw grid boundary
-    drawWireframeBox((float)GRID_SIZE_2D, (float)GRID_SIZE_2D);
+    // Upload the field as a single texture and blit it with one quad.
+    uploadFieldTexture(grid, state);
+    drawFieldQuad(grid.N, state.fidelity);
 
-    // Draw cells with supersampling if enabled
-    for(int j = 1; j <= grid.N; j++) {
-        for(int i = 1; i <= grid.N; i++) {
-            if (state.fidelity == SimulationState_2D::LOW) {
-                drawCell(grid, state, i, j);
-            } else {
-                drawCellSupersampled(grid, state, i, j);
-            }
-        }
-    }
+    // Grid boundary on top of the field
+    drawWireframeBox((float)GRID_SIZE_2D, (float)GRID_SIZE_2D);
 
     // Draw velocity vectors if enabled
     if (state.showVelocityVectors) {
@@ -578,8 +571,8 @@ void UI_2D::renderImGUI(Grid2D& grid, SimulationState_2D& state, CameraState_2D&
 
     if (ImGui::Button("Reset Camera")) {
         camera.zoom = 0.5f;
-        camera.panX = GRID_SIZE_2D * 0.5f;
-        camera.panY = GRID_SIZE_2D * 0.5f;
+        camera.panX = (GRID_SIZE_2D + 2) * 0.5f;
+        camera.panY = (GRID_SIZE_2D + 2) * 0.5f;
     }
 
     // Statistics
@@ -655,11 +648,13 @@ GLFWwindow* App_2D::initializeWindow() {
     glfwSwapInterval(1);
 
     glewExperimental = GL_TRUE;
-    if (glewInit() != GLEW_OK) {
-        std::cerr << "Failed to initialize GLEW" << std::endl;
-        glfwDestroyWindow(window);
-        glfwTerminate();
-        return nullptr;
+    GLenum glewStatus = glewInit();
+    if (glewStatus != GLEW_OK) {
+        // GLEW's GLX backend cannot find a display under Wayland/EGL. The app only
+        // uses OpenGL 1.1 entry points, so this is non-fatal on Linux.
+        std::cerr << "Warning: GLEW init failed: " << glewGetErrorString(glewStatus)
+                  << std::endl;
+        while (glGetError() != GL_NO_ERROR) {}
     }
 
     return window;
@@ -721,7 +716,7 @@ void App_2D::shutdown(GLFWwindow* window) {
     glfwTerminate();
 }
 
-int main() {
+int main2d() {
     // Initialize window
     GLFWwindow* window = App_2D::initializeWindow();
     if (!window) {
